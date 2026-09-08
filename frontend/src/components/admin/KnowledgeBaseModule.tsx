@@ -16,6 +16,7 @@ import {
   Sparkles,
   BookOpen,
   ArrowRight,
+  CornerDownRight,
   ShieldAlert,
   Info
 } from "lucide-react";
@@ -213,64 +214,195 @@ export function KnowledgeBaseModule() {
         </div>
       </div>
 
-      {/* Normative Lineage Tree Card */}
-      <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <GitBranch className="w-4 h-4 text-[#C2410C]" />
-            <h3 className="text-sm font-bold text-stone-900">
-              Árbol de Relaciones y Derogaciones Normativas
-            </h3>
-          </div>
-          <span className="text-xs text-stone-400">
-            Previene respuestas contradictorias o normativas obsoletas en el RAG
-          </span>
-        </div>
+      {/* Normative Lineage & Relationship Tree Card */}
+      {(() => {
+        const vigentesCount = documents.filter((d) => d.validity_status === "VIGENTE").length;
+        const modificadosCount = documents.filter((d) => d.validity_status === "MODIFICADO").length;
+        const derogadosCount = documents.filter((d) => d.validity_status === "DEROGADO").length;
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-          <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200 space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-bold text-stone-800">
-              <span>Modalidades de Grado</span>
-              <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-1.5 py-0.2 rounded font-semibold">
-                Activa
-              </span>
-            </div>
-            <p className="text-xs text-stone-600 font-medium">Acuerdo 038 de 2015</p>
-            <div className="flex items-center gap-1.5 text-[11px] text-stone-500 pt-1 border-t border-stone-200/60">
-              <ArrowRight className="w-3 h-3 text-stone-400" />
-              <span>Reglamenta pasantías, monografías y posgrados</span>
-            </div>
-          </div>
+        // Build relationship chains:
+        // Find documents that supersede other documents or were superseded
+        const relationChains = documents
+          .filter((doc) => doc.supersedes_id || doc.superseded_by_title)
+          .map((doc) => {
+            const supersededDoc = doc.supersedes_id
+              ? documents.find((d) => d.id === doc.supersedes_id)
+              : null;
+            return {
+              doc,
+              supersededDoc,
+            };
+          });
 
-          <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200 space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-bold text-stone-800">
-              <span>Requisito Inglés B2</span>
-              <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-1.5 py-0.2 rounded font-semibold">
-                Activa
-              </span>
-            </div>
-            <p className="text-xs text-stone-600 font-medium">Acuerdo 004 de 2021 CSU</p>
-            <div className="flex items-center gap-1.5 text-[11px] text-stone-500 pt-1 border-t border-stone-200/60">
-              <ArrowRight className="w-3 h-3 text-stone-400" />
-              <span>Acreditación ILUD y exámenes internacionales</span>
-            </div>
-          </div>
+        // Standalone active documents (not superseding anything and not superseded)
+        const standaloneDocs = documents.filter(
+          (doc) => !doc.supersedes_id && !doc.superseded_by_title && doc.validity_status === "VIGENTE"
+        );
 
-          <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200 space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-bold text-stone-800">
-              <span>Estatuto Estudiantil</span>
-              <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-1.5 py-0.2 rounded font-semibold">
-                Activa
-              </span>
+        return (
+          <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200/70 flex items-center justify-center">
+                  <GitBranch className="w-4 h-4 text-[#C2410C]" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-stone-900">
+                    Árbol de Relaciones y Linaje Normativo
+                  </h3>
+                  <p className="text-[11px] text-stone-400">
+                    Mapeo dinámico de vigencias, modificaciones parciales y derogatorias activas en ChromaDB
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 text-xs font-semibold">
+                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200/80 rounded-lg">
+                  {vigentesCount} Vigentes
+                </span>
+                {modificadosCount > 0 && (
+                  <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200/80 rounded-lg">
+                    {modificadosCount} Modificadas
+                  </span>
+                )}
+                {derogadosCount > 0 && (
+                  <span className="px-2.5 py-1 bg-rose-50 text-rose-800 border border-rose-200/80 rounded-lg">
+                    {derogadosCount} Derogadas
+                  </span>
+                )}
+              </div>
             </div>
-            <p className="text-xs text-stone-600 font-medium">Acuerdo 027 de 1993</p>
-            <div className="flex items-center gap-1.5 text-[11px] text-stone-500 pt-1 border-t border-stone-200/60">
-              <ArrowRight className="w-3 h-3 text-stone-400" />
-              <span>Paz y salvos, reservas y deberes estudiantiles</span>
-            </div>
+
+            {documents.length === 0 ? (
+              <div className="py-8 px-4 text-center rounded-xl bg-stone-50 border border-dashed border-stone-200 space-y-1.5">
+                <GitBranch className="w-7 h-7 text-stone-300 mx-auto" />
+                <p className="text-xs font-semibold text-stone-600">
+                  No hay acuerdos ni resoluciones registradas en la base de conocimiento
+                </p>
+                <p className="text-[11px] text-stone-400 max-w-md mx-auto">
+                  Al cargar acuerdos o resoluciones oficiales en PDF, el sistema auditará las cláusulas de vigencia y derogatoria para conectar el árbol genealógico normativo en tiempo real.
+                </p>
+              </div>
+            ) : relationChains.length === 0 && standaloneDocs.length > 0 ? (
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center justify-between text-xs text-stone-500 bg-stone-50/70 p-2.5 rounded-xl border border-stone-100">
+                  <span className="font-medium text-stone-600 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Normas Pilares Activas (Sin conflictos ni derogaciones registradas)
+                  </span>
+                  <span className="text-[11px] text-stone-400">
+                    {standaloneDocs.length} documento{standaloneDocs.length > 1 ? "s" : ""} indexado{standaloneDocs.length > 1 ? "s" : ""}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {standaloneDocs.map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="p-3.5 rounded-xl bg-white border border-stone-200 hover:border-amber-300 hover:shadow-xs transition space-y-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-xs font-bold text-stone-800 line-clamp-1">
+                          {doc.title}
+                        </span>
+                        <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded font-semibold whitespace-nowrap">
+                          Vigente
+                        </span>
+                      </div>
+                      <p className="text-xs text-stone-600 font-medium">
+                        {doc.resolution_number || "Documento Oficial"}
+                      </p>
+                      <div className="flex items-center justify-between text-[11px] text-stone-500 pt-1.5 border-t border-stone-100">
+                        <span className="text-stone-400">
+                          {doc.effective_date || "Fecha institucional"}
+                        </span>
+                        <span className="font-mono text-stone-600 bg-stone-100 px-1.5 py-0.2 rounded">
+                          {doc.chunk_count} fragmentos
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 pt-1">
+                <div className="grid grid-cols-1 gap-3">
+                  {relationChains.map(({ doc, supersededDoc }) => (
+                    <div
+                      key={doc.id}
+                      className="p-3.5 rounded-xl bg-stone-50/80 border border-stone-200 space-y-2.5"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-stone-900">{doc.title}</span>
+                          <span className="text-[10px] text-emerald-800 bg-emerald-100 px-2 py-0.2 rounded font-semibold">
+                            {doc.validity_status}
+                          </span>
+                          <span className="text-[11px] text-stone-500 font-mono">
+                            ({doc.resolution_number})
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-stone-400 font-mono">
+                          {doc.chunk_count} fragmentos en ChromaDB
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 pl-2 text-xs font-semibold text-amber-700">
+                        <CornerDownRight className="w-3.5 h-3.5 text-amber-600" />
+                        <span>
+                          {doc.validity_status === "MODIFICADO"
+                            ? "Modifica parcialmente a:"
+                            : "Deroga normativamente a:"}
+                        </span>
+                      </div>
+
+                      <div className="ml-4 p-2.5 rounded-lg bg-white border border-rose-200/80 flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <AlertOctagon className="w-3.5 h-3.5 text-rose-500" />
+                          <span className="font-medium text-stone-800">
+                            {supersededDoc ? supersededDoc.title : doc.superseded_by_title || "Norma preexistente"}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                          {supersededDoc ? supersededDoc.validity_status : "DEROGADO"} (Excluido de RAG)
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {standaloneDocs.length > 0 && (
+                    <div className="pt-2">
+                      <span className="text-xs font-bold text-stone-700 block mb-2">
+                        Otras Normas Base Vigentes:
+                      </span>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {standaloneDocs.map((doc) => (
+                          <div
+                            key={doc.id}
+                            className="p-3 rounded-lg bg-white border border-stone-200 space-y-1"
+                          >
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-semibold text-stone-900 line-clamp-1">
+                                {doc.title}
+                              </span>
+                              <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded font-medium">
+                                Vigente
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-stone-500">
+                              {doc.resolution_number} • {doc.chunk_count} fragmentos
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Documents Table */}
       <div className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden">

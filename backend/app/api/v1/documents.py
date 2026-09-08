@@ -118,6 +118,8 @@ async def upload_document(
                 applied_derogations = normative_auditor.apply_derogations(audit, doc_title, db, min_confidence=85.0)
                 if applied_derogations:
                     superseded_title = ", ".join([d.get("title", "") for d in applied_derogations])
+                    if not supersedes_id:
+                        supersedes_id = applied_derogations[0].get("document_id")
         except Exception as audit_err:
             print(f"[Upload] Warning in normative audit: {audit_err}")
 
