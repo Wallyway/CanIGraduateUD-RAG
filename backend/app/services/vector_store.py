@@ -63,11 +63,6 @@ class VectorStoreService:
             ids=ids
         )
         logger.info(f"Recreated collection and upserted {len(chunks)} chunks.")
-        try:
-            from app.scripts.seed_db import seed_knowledge_base
-            seed_knowledge_base()
-        except Exception as re_err:
-            logger.warning(f"Reseed warning: {re_err}")
 
     def query(self, query_text: str, n_results: int = 5) -> List[Dict[str, Any]]:
         """Queries the vector collection for relevant chunks."""

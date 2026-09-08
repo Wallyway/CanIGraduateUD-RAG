@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.session import init_db
 from app.api.router import api_router
-from app.scripts.seed_db import seed_knowledge_base
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,14 +15,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize database tables & seed initial documents if empty
+    # Startup: Initialize database tables
     logger.info("Starting CanIGraduateUD-RAG backend...")
     init_db()
-    try:
-        seed_knowledge_base()
-    except Exception as e:
-        logger.warning(f"Seed knowledge base notice: {e}")
-
     yield
 
     # Shutdown
