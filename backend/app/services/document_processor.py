@@ -7,6 +7,67 @@ from pypdf import PdfReader
 logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
+    @staticmethod
+    def is_pairwise_duplicated(token: str) -> bool:
+        """Checks if all characters in the token are repeated in adjacent pairs."""
+        if len(token) < 2 or len(token) % 2 != 0:
+            return False
+        return all(token[i] == token[i+1] for i in range(0, len(token), 2))
+
+    def clean_shadow_duplicates(self, text: str) -> str:
+        """
+        Detects and removes drop-shadow / faux-bold vector glyph duplication artifacts
+        (e.g., 'UUNNIIVVEERRSSIIDDAADD' -> 'UNIVERSIDAD') commonly produced by official
+        Colombian university PDF generators that print grey shadow glyphs under black text.
+
+        Preserves standard Spanish double letters ('rr', 'll', 'cc', 'ee', 'oo'),
+        roman numerals ('I', 'II', 'III'), and non-duplicated paragraphs.
+        """
+        if not text:
+            return ""
+
+        paragraphs = text.split("\n\n")
+        cleaned_paragraphs = []
+
+        for para in paragraphs:
+            tokens = para.split()
+            if not tokens:
+                cleaned_paragraphs.append(para)
+                continue
+
+            # Check if paragraph contains long pairwise duplicated words (length >= 4)
+            dup_evidence_count = sum(1 for t in tokens if len(t) >= 4 and self.is_pairwise_duplicated(t))
+            is_shadow_para = (dup_evidence_count >= 1)
+
+            if not is_shadow_para:
+                cleaned_paragraphs.append(para)
+                continue
+
+            lines = para.split("\n")
+            cleaned_lines = []
+            for line in lines:
+                line_tokens = re.split(r'(\s+)', line)
+                line_has_dup = any(len(t) >= 4 and self.is_pairwise_duplicated(t) for t in line_tokens if t.strip())
+
+                cleaned_toks = []
+                for tok in line_tokens:
+                    if not tok.strip():
+                        cleaned_toks.append(tok)
+                    elif len(tok) >= 4 and self.is_pairwise_duplicated(tok):
+                        cleaned_toks.append(tok[::2])
+                    elif (line_has_dup or is_shadow_para) and len(tok) == 2 and tok[0] == tok[1]:
+                        # Short 2-char token like 'yy', 'aa', '""', '00', '..' in duplicated context
+                        cleaned_toks.append(tok[0])
+                    elif (line_has_dup or is_shadow_para) and re.search(r'(.)\1(.)\2', tok):
+                        # Mixed token with run of doubles (e.g. attached punctuation)
+                        cleaned_toks.append(re.sub(r'(.)\1', r'\1', tok))
+                    else:
+                        cleaned_toks.append(tok)
+                cleaned_lines.append("".join(cleaned_toks))
+            cleaned_paragraphs.append("\n".join(cleaned_lines))
+
+        return "\n\n".join(cleaned_paragraphs)
+
     def extract_text_from_file(self, file_path: str) -> str:
         """Extracts plain text from PDF or Markdown/Text files."""
         if not os.path.exists(file_path):
@@ -17,7 +78,8 @@ class DocumentProcessor:
             return self._extract_text_from_pdf(file_path)
         else:
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                return f.read()
+                content = f.read()
+                return self.clean_shadow_duplicates(content)
 
     def _extract_text_from_pdf(self, file_path: str) -> str:
         text_parts = []
@@ -25,7 +87,8 @@ class DocumentProcessor:
             reader = PdfReader(file_path)
             for i, page in enumerate(reader.pages):
                 page_text = page.extract_text() or ""
-                text_parts.append(f"\n--- [Página {i+1}] ---\n{page_text}")
+                clean_text = self.clean_shadow_duplicates(page_text)
+                text_parts.append(f"\n--- [Página {i+1}] ---\n{clean_text}")
         except Exception as e:
             logger.error(f"Error reading PDF {file_path}: {e}")
             raise e

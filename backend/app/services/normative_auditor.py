@@ -79,6 +79,23 @@ class NormativeAuditorService:
             "}"
         )
 
+        if len(new_text) > 4500:
+            intro = new_text[:2500]
+            conclusion = new_text[-2500:]
+            derogation_snippets = []
+            for match in re.finditer(r'(?:deroga|vigencia|modifica|sustituye)[^\n]{0,120}(?:\n[^\n]+){1,6}', new_text, re.IGNORECASE):
+                snip = match.group(0).strip()
+                if snip and snip not in intro and snip not in conclusion:
+                    derogation_snippets.append(snip)
+
+            middle_text = "\n...\n".join(derogation_snippets[:4])
+            if middle_text:
+                doc_excerpt = f"{intro}\n\n[... CLÁUSULAS RELEVANTES DETECTADAS ...]\n{middle_text}\n\n[... DISPOSICIONES FINALES / VIGENCIA Y DEROGATORIAS ...]\n{conclusion}"
+            else:
+                doc_excerpt = f"{intro}\n\n[... DISPOSICIONES FINALES / VIGENCIA Y DEROGATORIAS ...]\n{conclusion}"
+        else:
+            doc_excerpt = new_text
+
         user_content = (
             f"CATÁLOGO DE NORMAS ACTIVAS EN LA UNIVERSIDAD DISTRITAL:\n"
             f"{json.dumps(catalog, indent=2, ensure_ascii=False)}\n\n"
@@ -86,7 +103,7 @@ class NormativeAuditorService:
             f"Título: {new_title}\n"
             f"Fecha: {new_date or 'No especificada'}\n\n"
             f"CONTENIDO DEL NUEVO DOCUMENTO (extracto):\n"
-            f"{new_text[:4000]}"
+            f"{doc_excerpt}"
         )
 
         messages = [
@@ -137,8 +154,8 @@ class NormativeAuditorService:
         Deterministic regex heuristic auditor ensuring 100% precision in legal clause detection.
         """
         import re
+        lower_text = " ".join(re.sub(r'[\*\#\_]', ' ', new_text.lower()).split())
         derogations = []
-        lower_text = new_text.lower()
 
         for doc in catalog:
             res_num = doc.get("resolution_number", "")
@@ -149,32 +166,44 @@ class NormativeAuditorService:
             if not num_match:
                 continue
             digits = num_match.group(0)
+            digits_unpadded = digits.lstrip("0") or "0"
+            num_pattern = rf'\b(?:{digits}|0*{digits_unpadded})\b'
 
             # Match keywords near document number
-            pattern = rf'(?:deroga|der[oó]gase|deja sin efecto|sustituye|abroga|modifica|modif[ií]case|reforma)\s+[\w\s,.-]{{0,60}}\b{digits}\b'
+            pattern = rf'(?:deroga|der[oó]gase|deja sin efecto|sustituye|abroga|modifica|modif[ií]case|reforma)\s+[\w\s,.-]{{0,140}}{num_pattern}'
             has_explicit_mention = (
                 re.search(pattern, lower_text) is not None or 
-                (digits in lower_text and any(k in lower_text for k in ["deroga", "modifícase", "modifica"]))
+                (re.search(num_pattern, lower_text) and any(k in lower_text for k in ["deroga", "modifícase", "modifica"]))
             )
             if has_explicit_mention:
                 is_total = any(
                     re.search(p, lower_text) is not None
                     for p in [
-                        rf'(?:deroga|der[oó]gase|abroga|deja sin efecto)\s+[\w\s,.-]{{0,40}}(?:en su totalidad|íntegramente|todas sus partes)',
-                        rf'(?:en su totalidad|íntegramente)\s+[\w\s,.-]{{0,30}}\b{digits}\b'
+                        rf'(?:deroga|der[oó]gase|abroga|deja sin efecto)\s+[\w\s,.-]{{0,60}}(?:en su totalidad|íntegramente|todas sus partes)',
+                        rf'(?:en su totalidad|íntegramente)\s+[\w\s,.-]{{0,40}}{num_pattern}'
                     ]
                 )
 
                 # Extract articles explicitly linked to modification or derogation
+                raw_arts = []
+                # 1. Multi-article list before resolution: e.g. "artículos 5º., 6º. y 10º de la resolución 012"
+                multi_art_match = re.search(
+                    rf'(?:art[íi]culos?|art\.?)\s+([0-9º\.,\sye]+?)\s+de\s+(?:la\s+)?(?:resolución|acuerdo)?\s*(?:n[º°\.]*\s*)?{num_pattern}',
+                    lower_text
+                )
+                if multi_art_match:
+                    raw_arts.extend(re.findall(r'\d+', multi_art_match.group(1)))
+
+                # 2. Individual article mentions
                 mod_art_matches = re.findall(
                     rf'(?:modifica|modif[ií]case|reforma|deroga|der[oó]gase|sustituye)[^.\n]*?(?:art[íi]culo|art\.?)\s*(\d+)',
                     lower_text
                 )
                 del_art_matches = re.findall(
-                    rf'(?:art[íi]culo|art\.?)\s*(\d+)\s+(?:del|de la)\s+[\w\s,.-]{{0,30}}\b{digits}\b',
+                    rf'(?:art[íi]culo|art\.?)\s*(\d+)\s+(?:del|de la)\s+[\w\s,.-]{{0,30}}{num_pattern}',
                     lower_text
                 )
-                raw_arts = mod_art_matches + del_art_matches
+                raw_arts.extend(mod_art_matches + del_art_matches)
                 all_arts = sorted(list(set(raw_arts)), key=int) if raw_arts else []
 
                 if all_arts and not is_total:

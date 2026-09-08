@@ -16,7 +16,10 @@ from app.services.triage_service import triage_service
 from app.services.vector_store import vector_store
 from app.services.eml_parser import parse_eml_bytes
 from app.services.document_processor import document_processor
+import logging
 from app.services.llm_adapter import llm_adapter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -123,24 +126,43 @@ def approve_and_index_email(
         "chunks_indexed": doc_item.chunk_count
     }
 
+@router.delete("/emails/{email_id}")
 @router.post("/emails/{email_id}/reject")
 def reject_email(
     email_id: int,
     db: Session = Depends(get_db),
     admin: str = Depends(get_current_admin)
 ):
-    """Rejects an email notice so it won't be indexed into knowledge base."""
+    """Permanently deletes and discards an email notice from the triage inbox."""
     email = db.query(EmailNotice).filter(EmailNotice.id == email_id).first()
     if not email:
         raise HTTPException(status_code=404, detail="Comunicado no encontrado")
 
-    email.status = "REJECTED"
-    email.reviewed_at = datetime.utcnow()
+    # Clean up vector chunks and documents derived from this notice if any
+    for doc in email.documents:
+        try:
+            vector_store.delete_by_document_id(doc.id)
+        except Exception as e:
+            logger.warning(f"Error removing vector chunks for doc {doc.id}: {e}")
+
+    # Remove physical uploaded attachment files if safe
+    if email.attachment_paths:
+        try:
+            paths = json.loads(email.attachment_paths) if email.attachment_paths.startswith("[") else [email.attachment_paths]
+            for p in paths:
+                att_file = os.path.join(settings.DATA_DIR, "uploads", os.path.basename(p))
+                if os.path.exists(att_file):
+                    os.remove(att_file)
+        except Exception as e:
+            logger.warning(f"Error removing attachment file for email {email_id}: {e}")
+
+    subject = email.subject
+    db.delete(email)
     db.commit()
 
     return {
         "success": True,
-        "message": f"Comunicado '{email.subject}' marcado como rechazado."
+        "message": f"Comunicado '{subject}' desechado y eliminado permanentemente."
     }
 
 @router.post("/emails/batch")
@@ -149,7 +171,7 @@ def batch_action_emails(
     db: Session = Depends(get_db),
     admin: str = Depends(get_current_admin)
 ):
-    """Approves or rejects multiple emails in a single batch operation."""
+    """Approves or permanently discards multiple emails in a single batch operation."""
     emails = db.query(EmailNotice).filter(EmailNotice.id.in_(payload.email_ids)).all()
     processed_count = 0
 
@@ -158,9 +180,22 @@ def batch_action_emails(
             triage_service.index_email_content(db, email)
             email.reviewed_at = datetime.utcnow()
             processed_count += 1
-        elif payload.action == "reject":
-            email.status = "REJECTED"
-            email.reviewed_at = datetime.utcnow()
+        elif payload.action in ["reject", "delete"]:
+            for doc in email.documents:
+                try:
+                    vector_store.delete_by_document_id(doc.id)
+                except Exception as e:
+                    logger.warning(f"Error removing vector chunks for doc {doc.id}: {e}")
+            if email.attachment_paths:
+                try:
+                    paths = json.loads(email.attachment_paths) if email.attachment_paths.startswith("[") else [email.attachment_paths]
+                    for p in paths:
+                        att_file = os.path.join(settings.DATA_DIR, "uploads", os.path.basename(p))
+                        if os.path.exists(att_file):
+                            os.remove(att_file)
+                except Exception:
+                    pass
+            db.delete(email)
             processed_count += 1
 
     db.commit()

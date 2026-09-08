@@ -173,10 +173,14 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
     setActionLoading(id);
     try {
       await rejectEmail(id);
+      if (selectedEmail?.id === id) {
+        setSelectedEmail(null);
+      }
+      setCheckedIds((prev) => prev.filter((i) => i !== id));
       await fetchEmails();
       onDataChanged?.();
     } catch (e: any) {
-      alert("Error al rechazar: " + e.message);
+      alert("Error al desechar: " + e.message);
     } finally {
       setActionLoading(null);
     }
@@ -220,12 +224,15 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
     const confirmText =
       action === "approve"
         ? `¿Aprobar e indexar ${checkedIds.length} comunicados seleccionados?`
-        : `¿Rechazar ${checkedIds.length} comunicados seleccionados?`;
+        : `¿Desechar y eliminar permanentemente ${checkedIds.length} comunicados seleccionados?`;
 
     if (!confirm(confirmText)) return;
 
     try {
       await batchActionEmails(checkedIds, action);
+      if (selectedEmail && checkedIds.includes(selectedEmail.id)) {
+        setSelectedEmail(null);
+      }
       setCheckedIds([]);
       await fetchEmails();
       onDataChanged?.();
@@ -402,9 +409,10 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
               </button>
               <button
                 onClick={() => handleBatchAction("reject")}
-                className="px-2.5 py-1 text-xs font-semibold text-stone-600 bg-stone-100 hover:bg-stone-200 border border-stone-200 rounded-lg transition"
+                className="px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition flex items-center gap-1"
               >
-                Desechar
+                <Trash2 className="w-3 h-3 text-rose-600" />
+                <span>Desechar</span>
               </button>
             </div>
           )}
@@ -508,7 +516,22 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                       </div>
                     </div>
 
-                    <ChevronRight className={`w-4 h-4 text-stone-400 self-center ${isSelected ? "text-[#C2410C]" : ""}`} />
+                    <div className="flex items-center gap-1 self-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`¿Desechar y eliminar permanentemente "${em.subject}"?`)) {
+                            handleReject(em.id);
+                          }
+                        }}
+                        disabled={actionLoading === em.id}
+                        className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                        title="Desechar y eliminar comunicado"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <ChevronRight className={`w-4 h-4 text-stone-400 ${isSelected ? "text-[#C2410C]" : ""}`} />
+                    </div>
                   </div>
                 );
               })
@@ -550,15 +573,19 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                         <span>Aprobar e Indexar</span>
                       </button>
                     )}
-                    {selectedEmail.status !== "REJECTED" && (
-                      <button
-                        onClick={() => handleReject(selectedEmail.id)}
-                        disabled={actionLoading === selectedEmail.id}
-                        className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-medium rounded-xl transition"
-                      >
-                        Desechar
-                      </button>
-                    )}
+                    <button
+                      onClick={() => {
+                        if (confirm(`¿Desechar y eliminar permanentemente "${selectedEmail.subject}"?`)) {
+                          handleReject(selectedEmail.id);
+                        }
+                      }}
+                      disabled={actionLoading === selectedEmail.id}
+                      className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl transition flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                      title="Desechar y eliminar permanentemente de la bandeja"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Desechar</span>
+                    </button>
                   </div>
                 </div>
 
