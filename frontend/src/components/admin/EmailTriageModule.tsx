@@ -72,6 +72,7 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
   const [editProgram, setEditProgram] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
 
   // Batch upload modal state
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -222,14 +223,15 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
   };
 
   const handleBatchAction = async (action: "approve" | "reject") => {
-    if (checkedIds.length === 0) return;
+    if (checkedIds.length === 0 || isBatchProcessing) return;
     const confirmText =
       action === "approve"
-        ? `¿Aprobar e indexar ${checkedIds.length} comunicados seleccionados?`
+        ? `¿Aprobar e indexar ${checkedIds.length} comunicados seleccionados? El proceso auditará derogaciones con IA y vectorizará los documentos en ChromaDB (puede tomar entre 15 y 30 segundos).`
         : `¿Desechar y eliminar permanentemente ${checkedIds.length} comunicados seleccionados?`;
 
     if (!confirm(confirmText)) return;
 
+    setIsBatchProcessing(true);
     try {
       await batchActionEmails(checkedIds, action);
       if (selectedEmail && checkedIds.includes(selectedEmail.id)) {
@@ -240,6 +242,8 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
       onDataChanged?.();
     } catch (e: any) {
       alert("Error en acción en lote: " + e.message);
+    } finally {
+      setIsBatchProcessing(false);
     }
   };
 
@@ -405,13 +409,22 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
               </span>
               <button
                 onClick={() => handleBatchAction("approve")}
-                className="px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition"
+                disabled={isBatchProcessing}
+                className="px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition flex items-center gap-1 disabled:opacity-50"
               >
-                Aprobar
+                {isBatchProcessing ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
+                    <span>Indexando...</span>
+                  </>
+                ) : (
+                  <span>Aprobar</span>
+                )}
               </button>
               <button
                 onClick={() => handleBatchAction("reject")}
-                className="px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition flex items-center gap-1"
+                disabled={isBatchProcessing}
+                className="px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition flex items-center gap-1 disabled:opacity-50"
               >
                 <Trash2 className="w-3 h-3 text-rose-600" />
                 <span>Desechar</span>
@@ -571,8 +584,17 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                         disabled={actionLoading === selectedEmail.id}
                         className="px-3.5 py-1.5 bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-semibold rounded-xl transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Aprobar e Indexar</span>
+                        {actionLoading === selectedEmail.id ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Indexando a ChromaDB...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Aprobar e Indexar</span>
+                          </>
+                        )}
                       </button>
                     )}
                     <button
@@ -590,6 +612,20 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                     </button>
                   </div>
                 </div>
+
+                {actionLoading === selectedEmail.id && (
+                  <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-amber-50/90 border border-amber-300/80 text-amber-950 text-xs animate-pulse shadow-xs">
+                    <Loader2 className="w-5 h-5 animate-spin text-[#C2410C] shrink-0" />
+                    <div className="flex-1">
+                      <p className="font-bold text-stone-900">
+                        Auditando e indexando resolución a ChromaDB...
+                      </p>
+                      <p className="text-[11px] text-stone-600 mt-0.5 leading-relaxed">
+                        El sistema está auditando derogaciones normativas con el modelo de lenguaje y generando los embeddings vectoriales para cada artículo. Este proceso suele tomar entre 10 y 25 segundos según la extensión del documento. Por favor espera...
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {isEditing ? (
                   <div className="space-y-3 pt-2">
