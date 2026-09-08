@@ -100,7 +100,6 @@ export function AdminSidebar({
       id: "analytics",
       label: "Analítica & Insights",
       icon: BarChart3,
-      badge: "Airlytics",
       badgeColor: "bg-orange-100 text-orange-800 border-orange-200"
     },
     {
