@@ -33,6 +33,7 @@ interface AdminSidebarProps {
   stats?: {
     pending_emails?: number;
     total_documents?: number;
+    total_vector_chunks?: number;
     autonomous_mode?: boolean;
   } | null;
   className?: string;
@@ -313,10 +314,10 @@ export function AdminSidebar({
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-                <span className="text-[11px] font-medium text-stone-700">RAG Operacional</span>
+                <span className="text-[11px] font-medium text-stone-700">RAG Activo</span>
               </div>
               <span className="text-[10px] font-mono font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                98.1%
+                {stats?.total_vector_chunks !== undefined ? `${stats.total_vector_chunks} chunks` : "Online"}
               </span>
             </div>
 
@@ -345,7 +346,7 @@ export function AdminSidebar({
             {/* Collapsed System Health Indicator */}
             <div
               className="w-9 h-9 rounded-xl bg-white border border-stone-200/80 flex items-center justify-center shadow-2xs cursor-pointer"
-              title="RAG Operacional: 98.1% de éxito"
+              title={`RAG Operacional: ${stats?.total_vector_chunks ?? 0} chunks indexados`}
             >
               <span className="relative flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>

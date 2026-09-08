@@ -30,6 +30,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
   const [stats, setStats] = useState<{
     pending_emails?: number;
     total_documents?: number;
+    total_vector_chunks?: number;
     autonomous_mode?: boolean;
   } | null>(null);
 
