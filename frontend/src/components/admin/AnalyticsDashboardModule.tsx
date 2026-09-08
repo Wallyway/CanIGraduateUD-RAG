@@ -801,7 +801,8 @@ export function AnalyticsDashboardModule() {
                 </span>
               </div>
               <div className="text-right text-[11px] text-stone-500 font-mono space-y-0.5">
-                <div>Model: {data.system_health?.model_name || "openrouter/free"}</div>
+                <div>Model: {data.system_health?.model_name || "Sin modelo configurado"}</div>
+                <div>Motor: {data.system_health?.provider?.toUpperCase() || "OPENROUTER"}</div>
                 <div>Vector: ChromaDB Persistent ({data.kpis.total_vector_chunks ?? 0} chunks)</div>
                 <div>Documentos: {data.kpis.total_documents ?? 0} acuerdos activos</div>
               </div>
