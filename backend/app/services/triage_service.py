@@ -1,10 +1,13 @@
+import os
 import json
 import logging
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
+from app.core.config import settings
 from app.services.llm_adapter import llm_adapter
 from app.services.document_processor import document_processor
 from app.services.vector_store import vector_store
+from app.services.normative_auditor import normative_auditor
 from app.db.models import EmailNotice, DocumentItem, SystemSetting
 
 logger = logging.getLogger(__name__)
@@ -91,12 +94,30 @@ class TriageService:
         is_ud_domain = sender.lower().strip().endswith("@udistrital.edu.co")
         has_conflict_keywords = any(kw in (subject + " " + body).lower() for kw in ["deroga", "derógase", "modifica acuerdo", "deja sin efecto", "sustituye"])
 
+        # Run normative auditor to detect derogations against existing catalog
+        derogation_audit = normative_auditor.audit_derogations(
+            new_text=body,
+            new_title=subject,
+            new_date=None,
+            db=db
+        )
+
         guardrail_notes = []
+        if derogation_audit.get("has_derogation"):
+            conf = derogation_audit.get("confidence", 0)
+            guardrail_notes.append(f"Alerta Normativa: Se detectó modificación o derogación con certeza del {conf:.0f}%.")
+            for der in derogation_audit.get("derogations", []):
+                guardrail_notes.append(
+                    f" • {der.get('target_resolution')}: {der.get('derogation_type')} "
+                    f"({', '.join(der.get('affected_articles', []))}) - {der.get('summary_of_changes')}"
+                )
+
         if is_autonomous and is_relevant and score >= threshold:
             if require_ud_domain and not is_ud_domain:
                 guardrail_notes.append("Guardrail activado: El remitente no es @udistrital.edu.co. Requiere aprobación humana.")
-            if conflict_guardrail and has_conflict_keywords:
-                guardrail_notes.append("Guardrail activado: Se detectó una cláusula de posible derogación o modificación normativa. Requiere validación de vigencia.")
+            if conflict_guardrail and (has_conflict_keywords or derogation_audit.get("has_derogation")):
+                if derogation_audit.get("confidence", 0) < 90.0:
+                    guardrail_notes.append("Guardrail activado: Conflicto normativo con certeza menor a 90%. Requiere validación de vigencia.")
 
             if not guardrail_notes:
                 status = "AUTO_INDEXED"
@@ -133,6 +154,24 @@ class TriageService:
 
     def index_email_content(self, db: Session, email: EmailNotice) -> DocumentItem:
         """Indexes the approved email body and attachments into ChromaDB."""
+        # 0. Check and apply any derogations/modifications against older regulations
+        try:
+            audit_result = normative_auditor.audit_derogations(
+                new_text=email.body_text,
+                new_title=f"Comunicado: {email.subject}",
+                new_date=email.received_at.strftime("%Y-%m-%d") if email.received_at else None,
+                db=db
+            )
+            if audit_result.get("has_derogation"):
+                normative_auditor.apply_derogations(
+                    audit_result=audit_result,
+                    new_doc_title=f"Comunicado: {email.subject}",
+                    db=db,
+                    min_confidence=85.0
+                )
+        except Exception as aud_err:
+            logger.warning(f"Error applying derogations during email indexing: {aud_err}")
+
         # 1. Index the email body as a notice document
         doc_item = DocumentItem(
             title=f"Comunicado: {email.subject}",
@@ -142,27 +181,75 @@ class TriageService:
             source_type="EMAIL_BODY",
             email_id=email.id,
             resolution_number=f"Comunicado Correo UD ({email.sender})",
-            effective_date=email.received_at.strftime("%Y-%m-%d"),
+            effective_date=email.received_at.strftime("%Y-%m-%d") if email.received_at else None,
             status="INDEXED"
         )
         db.add(doc_item)
         db.commit()
         db.refresh(doc_item)
 
-        # Chunk and upsert into Chroma
+        # Chunk and upsert email body into Chroma
         metadata = {
             "document_id": doc_item.id,
             "title": doc_item.title,
             "filename": doc_item.filename,
             "resolution_number": doc_item.resolution_number,
             "source_type": doc_item.source_type,
-            "effective_date": doc_item.effective_date
+            "effective_date": doc_item.effective_date or ""
         }
         chunks, metas, ids = document_processor.chunk_normative_text(email.body_text, metadata)
         if chunks:
             vector_store.add_chunks(chunks, metas, ids)
             doc_item.chunk_count = len(chunks)
             db.commit()
+
+        # 2. Index any attached PDFs or documents
+        try:
+            attachment_names = json.loads(email.attachment_paths or "[]")
+            upload_dir = os.path.join(settings.DATA_DIR, "uploads")
+            for att_name in attachment_names:
+                att_path = os.path.join(upload_dir, att_name)
+                if os.path.exists(att_path):
+                    ext = os.path.splitext(att_name)[1].lower()
+                    if ext in [".pdf", ".txt", ".md"]:
+                        att_text = document_processor.extract_text_from_file(att_path)
+                        if att_text and len(att_text.strip()) > 50:
+                            att_doc = DocumentItem(
+                                title=f"Adjunto: {att_name} ({email.subject})",
+                                filename=att_name,
+                                file_path=att_path,
+                                file_type=ext.replace(".", ""),
+                                source_type="EMAIL_ATTACHMENT",
+                                email_id=email.id,
+                                resolution_number=f"Adjunto de Comunicado ({email.sender})",
+                                effective_date=doc_item.effective_date,
+                                validity_status="VIGENTE",
+                                status="INDEXED"
+                            )
+                            db.add(att_doc)
+                            db.commit()
+                            db.refresh(att_doc)
+
+                            att_doc.original_pdf_url = f"/api/v1/documents/{att_doc.id}/pdf"
+                            db.commit()
+
+                            att_meta = {
+                                "document_id": att_doc.id,
+                                "title": att_doc.title,
+                                "filename": att_doc.filename,
+                                "resolution_number": att_doc.resolution_number,
+                                "source_type": att_doc.source_type,
+                                "effective_date": att_doc.effective_date or "",
+                                "pdf_url": att_doc.original_pdf_url
+                            }
+                            att_chunks, att_metas, att_ids = document_processor.chunk_normative_text(att_text, att_meta)
+                            if att_chunks:
+                                vector_store.add_chunks(att_chunks, att_metas, att_ids)
+                                att_doc.chunk_count = len(att_chunks)
+                                db.commit()
+                                logger.info(f"Indexed {len(att_chunks)} chunks for attached document {att_name}")
+        except Exception as att_err:
+            logger.warning(f"Error indexing email attachments: {att_err}")
 
         # Update email status
         email.status = "APPROVED_INDEXED"

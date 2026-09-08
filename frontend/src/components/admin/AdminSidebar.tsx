@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { clearAdminToken } from "@/lib/storage";
 
-export type AdminTab = "analytics" | "triage" | "knowledge" | "settings" | "simulator";
+export type AdminTab = "analytics" | "triage" | "knowledge" | "settings";
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -126,20 +126,6 @@ export function AdminSidebar({
       badgeColor: stats?.autonomous_mode
         ? "bg-emerald-100 text-emerald-800 border-emerald-200"
         : "bg-stone-100 text-stone-600 border-stone-200"
-    }
-  ];
-
-  const toolsItems: Array<{
-    id: AdminTab;
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-    badge?: string | null;
-  }> = [
-    {
-      id: "simulator",
-      label: "Simulador de Correos",
-      icon: Send,
-      badge: "M365"
     }
   ];
 
@@ -281,70 +267,13 @@ export function AdminSidebar({
           <div className="space-y-1">
             {!isCollapsed ? (
               <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-3 block">
-                Herramientas RAG
+                Portal Estudiantil
               </span>
             ) : (
               <div className="w-7 h-px bg-stone-200/80 mx-auto my-1" />
             )}
 
             <div className="space-y-1 pt-0.5">
-              {toolsItems.map((tool) => {
-                const Icon = tool.icon;
-                const isActive = activeTab === tool.id;
-
-                if (isCollapsed) {
-                  return (
-                    <button
-                      key={tool.id}
-                      onClick={() => handleTabClick(tool.id)}
-                      title={tool.label}
-                      className={`w-11 h-11 mx-auto rounded-xl flex items-center justify-center relative transition-all group ${
-                        isActive
-                          ? "bg-stone-900 text-white shadow-xs font-semibold"
-                          : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/60"
-                      }`}
-                    >
-                      <Icon
-                        className={`w-4 h-4 shrink-0 ${
-                          isActive ? "text-orange-400" : "text-stone-500 group-hover:text-stone-800"
-                        }`}
-                      />
-                    </button>
-                  );
-                }
-
-                return (
-                  <button
-                    key={tool.id}
-                    onClick={() => handleTabClick(tool.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                      isActive
-                        ? "bg-stone-900 text-white shadow-xs font-semibold"
-                        : "text-stone-600 hover:text-stone-900 hover:bg-stone-200/60"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <Icon
-                        className={`w-4 h-4 shrink-0 ${
-                          isActive ? "text-orange-400" : "text-stone-500"
-                        }`}
-                      />
-                      <span className="truncate">{tool.label}</span>
-                    </div>
-                    {tool.badge && (
-                      <span
-                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                          isActive
-                            ? "bg-stone-800 text-stone-200 border-stone-700"
-                            : "bg-stone-100 text-stone-600 border-stone-200"
-                        }`}
-                      >
-                        {tool.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
 
               {/* Direct Student View Link */}
               {!isCollapsed ? (

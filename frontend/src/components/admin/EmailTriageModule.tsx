@@ -19,14 +19,20 @@ import {
   Edit3,
   Save,
   Tag,
-  GraduationCap
+  GraduationCap,
+  UploadCloud,
+  Trash2,
+  X,
+  AlertCircle,
+  Loader2
 } from "lucide-react";
 import {
   getAdminEmails,
   approveEmail,
   rejectEmail,
   updateEmailMetadata,
-  batchActionEmails
+  batchActionEmails,
+  uploadBatchTriageFiles
 } from "@/lib/api";
 
 export interface EmailNoticeData {
@@ -66,6 +72,59 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
   const [editProgram, setEditProgram] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+
+  // Batch upload modal state
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [selectedUploadFiles, setSelectedUploadFiles] = useState<File[]>([]);
+  const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [uploadResults, setUploadResults] = useState<any[] | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const handleFilesSelected = (files: FileList | null) => {
+    if (!files) return;
+    const validFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const ext = f.name.split('.').pop()?.toLowerCase();
+      if (ext === 'eml' || ext === 'pdf') {
+        validFiles.push(f);
+      }
+    }
+    if (validFiles.length === 0) {
+      alert("Por favor selecciona únicamente archivos con extensión .eml o .pdf");
+      return;
+    }
+    setSelectedUploadFiles((prev) => [...prev, ...validFiles]);
+    setUploadError(null);
+    setUploadResults(null);
+  };
+
+  const removeUploadFile = (index: number) => {
+    setSelectedUploadFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleStartBatchUpload = async () => {
+    if (selectedUploadFiles.length === 0) return;
+    setIsUploadingFiles(true);
+    setUploadError(null);
+    try {
+      const data = await uploadBatchTriageFiles(selectedUploadFiles);
+      setUploadResults(data.results || []);
+      await fetchEmails();
+      onDataChanged?.();
+    } catch (err: any) {
+      setUploadError(err.message || "Error al procesar los archivos");
+    } finally {
+      setIsUploadingFiles(false);
+    }
+  };
+
+  const handleCloseUploadModal = () => {
+    setIsUploadModalOpen(false);
+    setSelectedUploadFiles([]);
+    setUploadResults(null);
+    setUploadError(null);
+  };
 
   const fetchEmails = async () => {
     setIsLoading(true);
@@ -259,6 +318,20 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setSelectedUploadFiles([]);
+              setUploadResults(null);
+              setUploadError(null);
+              setIsUploadModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#C2410C] hover:bg-[#9A3412] rounded-xl transition shadow-xs"
+            title="Cargar archivos .EML o PDFs de comunicados"
+          >
+            <UploadCloud className="w-4 h-4" />
+            <span>+ Importar Comunicados (.EML / PDF)</span>
+          </button>
+
           <button
             onClick={fetchEmails}
             disabled={isLoading}
@@ -623,6 +696,221 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
           )}
         </div>
       </div>
+
+      {/* ─────────────────────────────────────────────────────────
+       * BATCH UPLOAD MODAL (.EML & .PDF)
+       * ───────────────────────────────────────────────────────── */}
+      {isUploadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-fadeIn">
+          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200 bg-stone-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-orange-100 text-[#C2410C] flex items-center justify-center">
+                  <UploadCloud className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-stone-900">
+                    Importar Comunicados a la Bandeja de Triage
+                  </h3>
+                  <p className="text-[11px] text-stone-500">
+                    Carga archivos .EML (correos institucionales) o circulares en PDF para evaluación LLM.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleCloseUploadModal}
+                className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {/* Drag & Drop Zone */}
+              {!uploadResults && (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleFilesSelected(e.dataTransfer.files);
+                  }}
+                  className="border-2 border-dashed border-stone-300 hover:border-[#C2410C] bg-stone-50/50 hover:bg-orange-50/20 rounded-2xl p-6 text-center transition cursor-pointer"
+                  onClick={() => document.getElementById("batch-triage-file-input")?.click()}
+                >
+                  <input
+                    id="batch-triage-file-input"
+                    type="file"
+                    multiple
+                    accept=".eml,.pdf"
+                    className="hidden"
+                    onChange={(e) => handleFilesSelected(e.target.files)}
+                  />
+                  <UploadCloud className="w-10 h-10 text-stone-400 mx-auto mb-2" />
+                  <p className="text-xs font-semibold text-stone-800">
+                    Arrastra aquí tus archivos <span className="text-[#C2410C]">.EML</span> o <span className="text-[#C2410C]">.PDF</span>
+                  </p>
+                  <p className="text-[11px] text-stone-500 mt-1">
+                    o haz clic para explorar en tu equipo (admite selección múltiple)
+                  </p>
+                </div>
+              )}
+
+              {/* Selected Files List */}
+              {selectedUploadFiles.length > 0 && !uploadResults && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs font-semibold text-stone-700">
+                    <span>Archivos listos para procesar ({selectedUploadFiles.length})</span>
+                    {!isUploadingFiles && (
+                      <button
+                        onClick={() => setSelectedUploadFiles([])}
+                        className="text-[11px] text-red-600 hover:underline"
+                      >
+                        Limpiar lista
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                    {selectedUploadFiles.map((file, idx) => {
+                      const ext = file.name.split('.').pop()?.toLowerCase();
+                      const sizeKb = (file.size / 1024).toFixed(1);
+                      return (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between p-2 rounded-xl bg-stone-50 border border-stone-200 text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                ext === "eml"
+                                  ? "bg-blue-100 text-blue-800"
+                                  : "bg-red-100 text-red-800"
+                              }`}
+                            >
+                              {ext?.toUpperCase()}
+                            </span>
+                            <span className="truncate font-medium text-stone-800">{file.name}</span>
+                            <span className="text-[10px] text-stone-400">({sizeKb} KB)</span>
+                          </div>
+                          {!isUploadingFiles && (
+                            <button
+                              onClick={() => removeUploadFile(idx)}
+                              className="p-1 text-stone-400 hover:text-red-600 transition"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Uploading progress indicator */}
+              {isUploadingFiles && (
+                <div className="p-6 text-center space-y-3 bg-stone-50 rounded-2xl border border-stone-200">
+                  <Loader2 className="w-8 h-8 text-[#C2410C] animate-spin mx-auto" />
+                  <p className="text-xs font-bold text-stone-900">
+                    Procesando comunicados con el Agente LLM...
+                  </p>
+                  <p className="text-[11px] text-stone-500">
+                    Extrayendo cabeceras, adjuntos, y evaluando pertinencia institucional...
+                  </p>
+                </div>
+              )}
+
+              {/* Upload Error */}
+              {uploadError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+
+              {/* Upload Results Summary */}
+              {uploadResults && (
+                <div className="space-y-3 animate-fadeIn">
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2 font-medium">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Se procesaron exitosamente {uploadResults.length} archivo(s).</span>
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                    {uploadResults.map((r, i) => (
+                      <div
+                        key={i}
+                        className="p-3 rounded-xl bg-stone-50 border border-stone-200 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-stone-900 truncate">
+                            {r.subject || r.filename}
+                          </span>
+                          {r.is_relevant !== undefined && (
+                            <span
+                              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                r.is_relevant
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-stone-200 text-stone-600"
+                              }`}
+                            >
+                              {r.is_relevant ? `${r.relevance_score}% Relevante` : "Descartable"}
+                            </span>
+                          )}
+                        </div>
+                        {r.triage_summary && (
+                          <p className="text-[11px] text-stone-600 line-clamp-2">
+                            {r.triage_summary}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-3 text-[10px] text-stone-400">
+                          <span>Tipo: {r.type?.toUpperCase()}</span>
+                          <span>Estado: {r.status}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-stone-200 bg-stone-50/50">
+              {!uploadResults ? (
+                <>
+                  <button
+                    onClick={handleCloseUploadModal}
+                    disabled={isUploadingFiles}
+                    className="px-3.5 py-1.5 text-xs font-medium text-stone-600 hover:text-stone-900 transition"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleStartBatchUpload}
+                    disabled={isUploadingFiles || selectedUploadFiles.length === 0}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-[#C2410C] hover:bg-[#9A3412] disabled:opacity-50 rounded-xl transition flex items-center gap-1.5 shadow-xs"
+                  >
+                    {isUploadingFiles && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>Iniciar Análisis & Carga ({selectedUploadFiles.length})</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={handleCloseUploadModal}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-stone-900 hover:bg-stone-800 rounded-xl transition shadow-xs"
+                >
+                  Ver Comunicados en Bandeja
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

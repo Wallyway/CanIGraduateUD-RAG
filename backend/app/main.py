@@ -14,9 +14,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-import asyncio
-from app.services.email_listener import imap_listener
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize database tables & seed initial documents if empty
@@ -27,21 +24,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Seed knowledge base notice: {e}")
 
-    # Start IMAP background listener if enabled and configured
-    imap_task = None
-    if settings.IMAP_ENABLED and settings.IMAP_PASSWORD:
-        logger.info("Starting IMAP background listener for Gmail...")
-        imap_task = asyncio.create_task(imap_listener.background_loop())
-    else:
-        logger.info("IMAP listener waiting for IMAP_PASSWORD in .env")
-
     yield
 
     # Shutdown
     logger.info("Shutting down CanIGraduateUD-RAG backend.")
-    if imap_task:
-        imap_listener.stop()
-        imap_task.cancel()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

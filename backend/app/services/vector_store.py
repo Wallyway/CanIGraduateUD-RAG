@@ -105,6 +105,69 @@ class VectorStoreService:
 
         return formatted_results
 
+    def get_chunks_by_document_id(self, document_id: int) -> List[Dict[str, Any]]:
+        """Retrieves all indexed chunks for a given document_id."""
+        try:
+            res = self.collection.get(where={"document_id": document_id})
+            formatted = []
+            if res and "ids" in res:
+                ids = res["ids"]
+                docs = res.get("documents", []) or [""] * len(ids)
+                metas = res.get("metadatas", []) or [{}] * len(ids)
+                for i in range(len(ids)):
+                    formatted.append({
+                        "id": ids[i],
+                        "content": docs[i],
+                        "metadata": metas[i]
+                    })
+            return formatted
+        except Exception as e:
+            logger.warning(f"Error fetching chunks for document_id {document_id}: {e}")
+            return []
+
+    def delete_chunks_by_article(self, document_id: int, articles: List[str]) -> List[str]:
+        """
+        Selectively purges only the chunks matching specific articles/sections
+        from a document, leaving the rest of the document's chunks intact in ChromaDB.
+        """
+        if not articles:
+            return []
+
+        import re
+        chunks = self.get_chunks_by_document_id(document_id)
+        ids_to_delete = []
+
+        # Build regex patterns for each target article (e.g. "Artículo 12" -> regex for Art. 12)
+        article_patterns = []
+        for art in articles:
+            clean_art = art.strip()
+            num_match = re.search(r'\b(?:art[íi]culo|art\.?)\s*(\d+)', clean_art, re.IGNORECASE)
+            if num_match:
+                art_num = num_match.group(1)
+                article_patterns.append(re.compile(rf'\b(?:art[íi]culo|art\.?)\s*{art_num}\b', re.IGNORECASE))
+            else:
+                article_patterns.append(re.compile(re.escape(clean_art), re.IGNORECASE))
+
+        for ch in chunks:
+            ch_id = ch["id"]
+            meta_article = str(ch.get("metadata", {}).get("article", ""))
+            content = str(ch.get("content", ""))
+
+            matches = False
+            for pat in article_patterns:
+                if pat.search(meta_article) or pat.search(content):
+                    matches = True
+                    break
+
+            if matches:
+                ids_to_delete.append(ch_id)
+
+        if ids_to_delete:
+            self.collection.delete(ids=ids_to_delete)
+            logger.info(f"Purged {len(ids_to_delete)} obsolete chunks for document_id {document_id}: {ids_to_delete}")
+
+        return ids_to_delete
+
     def delete_by_document_id(self, document_id: int):
         """Deletes all chunks belonging to a document_id."""
         self.collection.delete(

@@ -12,6 +12,7 @@ from app.api.deps import get_current_admin
 from app.services.document_processor import document_processor
 from app.services.vector_store import vector_store
 from app.services.markdown_converter import markdown_converter
+from app.services.normative_auditor import normative_auditor
 
 router = APIRouter()
 
@@ -94,6 +95,7 @@ async def upload_document(
     else:
         markdown_text = document_processor.extract_text_from_file(file_path)
 
+    applied_derogations = []
     # Check if this document supersedes an older document
     superseded_title = None
     if supersedes_id:
@@ -108,6 +110,16 @@ async def upload_document(
                 older_doc.chunk_count = 0
             except Exception as v_err:
                 print(f"[Upload] Error de-indexing superseded doc: {v_err}")
+    else:
+        # Automatically audit derogations using the LLM normative auditor
+        try:
+            audit = normative_auditor.audit_derogations(markdown_text, doc_title, effective_date, db)
+            if audit.get("has_derogation"):
+                applied_derogations = normative_auditor.apply_derogations(audit, doc_title, db, min_confidence=85.0)
+                if applied_derogations:
+                    superseded_title = ", ".join([d.get("title", "") for d in applied_derogations])
+        except Exception as audit_err:
+            print(f"[Upload] Warning in normative audit: {audit_err}")
 
     doc_item = DocumentItem(
         title=doc_title,
@@ -157,6 +169,7 @@ async def upload_document(
         "document_id": doc_item.id,
         "chunks_indexed": doc_item.chunk_count,
         "detected_derogations": detected_derogations,
+        "applied_derogations": applied_derogations,
         "superseded_document": superseded_title
     }
 

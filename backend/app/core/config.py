@@ -39,13 +39,6 @@ class Settings(BaseSettings):
     # Inbound Webhook Secret for Power Automate / Email Relay
     WEBHOOK_SECRET_KEY: str = "ud-incoming-email-webhook-secret-token-12345"
 
-    # IMAP Settings (Lector automático de Gmail institucional)
-    IMAP_ENABLED: bool = True
-    IMAP_SERVER: str = "imap.gmail.com"
-    IMAP_PORT: int = 993
-    IMAP_USER: str = "canigraduateud@gmail.com"
-    IMAP_PASSWORD: str = ""
-    IMAP_POLL_INTERVAL_SECONDS: int = 60
 
     # Storage Paths
     DATA_DIR: str = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")

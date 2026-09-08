@@ -4,7 +4,7 @@ import React, { useEffect, useState, Suspense } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AdminSidebar, AdminTab } from "@/components/admin/AdminSidebar";
 import { getAdminToken } from "@/lib/storage";
-import { getAdminStats, syncEmails } from "@/lib/api";
+import { getAdminStats } from "@/lib/api";
 import {
   Menu,
   X,
@@ -27,8 +27,6 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
 
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const [stats, setStats] = useState<{
     pending_emails?: number;
     total_documents?: number;
@@ -68,40 +66,18 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
 
   // Determine current active tab
   let activeTab: AdminTab = "analytics";
-  if (pathname === "/admin/simulator") {
-    activeTab = "simulator";
-  } else if (pathname === "/admin/documents") {
+  if (pathname === "/admin/documents") {
     activeTab = "knowledge";
   } else {
     const tabParam = searchParams.get("tab") as AdminTab | null;
-    if (tabParam && ["analytics", "triage", "knowledge", "settings", "simulator"].includes(tabParam)) {
+    if (tabParam && ["analytics", "triage", "knowledge", "settings"].includes(tabParam)) {
       activeTab = tabParam;
     }
   }
 
   const handleSelectTab = (tab: AdminTab) => {
-    if (tab === "simulator") {
-      router.push("/admin/simulator");
-    } else {
-      router.push(`/admin?tab=${tab}`);
-    }
+    router.push(`/admin?tab=${tab}`);
     setIsMobileSidebarOpen(false);
-  };
-
-  const handleSync = async () => {
-    setIsSyncing(true);
-    setSyncFeedback(null);
-    try {
-      const res = await syncEmails();
-      setSyncFeedback(res.message || "Buzón sincronizado.");
-      fetchStats();
-      setTimeout(() => setSyncFeedback(null), 4000);
-    } catch (e: any) {
-      setSyncFeedback("Error: " + (e.message || "No se pudo sincronizar"));
-      setTimeout(() => setSyncFeedback(null), 5000);
-    } finally {
-      setIsSyncing(false);
-    }
   };
 
   if (pathname === "/admin/login") {
@@ -124,7 +100,6 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
     triage: "Bandeja de Triage",
     knowledge: "Base de Conocimiento",
     settings: "Guardrails & Autogestión",
-    simulator: "Simulador de Correos",
   };
 
   return (
@@ -197,19 +172,6 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
 
           {/* Quick Search & Actions */}
           <div className="flex items-center gap-2.5 shrink-0">
-            {/* Sync Gmail Button */}
-            <button
-              onClick={handleSync}
-              disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold rounded-xl transition shadow-2xs disabled:opacity-50"
-              title="Sincronizar buzón IMAP de correos recibidos"
-            >
-              <Mail className={`w-3.5 h-3.5 text-orange-400 ${isSyncing ? "animate-spin" : ""}`} />
-              <span className="hidden sm:inline">
-                {isSyncing ? "Sincronizando..." : "Sincronizar Gmail"}
-              </span>
-            </button>
-
             {/* Student View Shortcut */}
             <Link
               href="/"
@@ -232,22 +194,6 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         </header>
-
-        {/* Sync Toast Feedback */}
-        {syncFeedback && (
-          <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 p-3 bg-stone-900 text-stone-100 rounded-xl text-xs flex items-center justify-between animate-fadeIn shadow-lg">
-            <span className="flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-orange-400" />
-              {syncFeedback}
-            </span>
-            <button
-              onClick={() => setSyncFeedback(null)}
-              className="text-stone-400 hover:text-stone-100 text-[11px] underline ml-2"
-            >
-              Cerrar
-            </button>
-          </div>
-        )}
 
         {/* Dynamic Page Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">

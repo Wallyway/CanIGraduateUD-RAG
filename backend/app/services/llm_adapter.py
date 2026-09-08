@@ -84,25 +84,51 @@ class LLMAdapter:
             }
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=1024,
-                response_format={"type": "json_object"}
-            )
-            content = response.choices[0].message.content
-            return json.loads(content)
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=1500,
+                    response_format={"type": "json_object"}
+                )
+            except Exception:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=1500
+                )
+
+            raw_choice = response.choices[0] if response.choices else None
+            content = raw_choice.message.content if raw_choice and raw_choice.message else ""
+            if not content:
+                content = str(getattr(raw_choice.message, "refusal", "") or "")
+
+            clean_json = (content or "").strip()
+            if "```json" in clean_json:
+                clean_json = clean_json.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean_json:
+                clean_json = clean_json.split("```")[1].split("```")[0].strip()
+
+            start_brace = clean_json.find("{")
+            end_brace = clean_json.rfind("}")
+            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                clean_json = clean_json[start_brace:end_brace + 1]
+
+            return json.loads(clean_json)
         except Exception as e:
             logger.error(f"Error in generate_json: {e}")
-            # Fallback parse
+            # Fallback parse for triage if messages contain email cues
+            user_text = " ".join([m.get("content", "") for m in messages]).lower()
+            is_relevant = any(kw in user_text for kw in ["sistemas", "grado", "grados", "pasantia", "monografia", "ilud", "comunicado"])
             return {
-                "is_relevant": True,
-                "relevance_score": 75.0,
+                "is_relevant": is_relevant,
+                "relevance_score": 90.0 if is_relevant else 20.0,
                 "target_program": "Ingeniería de Sistemas",
-                "summary": "Procesado con clasificación de respaldo.",
-                "reasoning": f"Clasificación heurística debido a: {str(e)}",
-                "recommended_action": "INDEX"
+                "summary": "Procesado con clasificación heurística de contingencia.",
+                "reasoning": f"Clasificación generada por el agente de contingencia: {str(e)}",
+                "recommended_action": "INDEX" if is_relevant else "IGNORE"
             }
 
     def get_embeddings(self, texts: List[str]) -> List[List[float]]:

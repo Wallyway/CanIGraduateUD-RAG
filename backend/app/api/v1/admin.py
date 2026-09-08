@@ -1,16 +1,21 @@
+import os
+import re
 import json
 import random
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from app.core.config import settings
 from app.db.session import get_db
 from app.db.models import EmailNotice, DocumentItem, SystemSetting, StudentQueryLog
 from app.api.deps import get_current_admin
 from app.services.triage_service import triage_service
 from app.services.vector_store import vector_store
+from app.services.eml_parser import parse_eml_bytes
+from app.services.document_processor import document_processor
 
 router = APIRouter()
 
@@ -22,12 +27,6 @@ class UpdateSettingsPayload(BaseModel):
     autonomous_threshold: Optional[float] = None
     require_ud_domain: Optional[bool] = None
     conflict_guardrail: Optional[bool] = None
-
-class SimulateEmailPayload(BaseModel):
-    sender: str
-    subject: str
-    body: str
-    attachments: Optional[List[str]] = []
 
 class UpdateEmailPayload(BaseModel):
     subject: Optional[str] = None
@@ -456,39 +455,99 @@ def get_crm_analytics(
         "knowledge_gaps": knowledge_gaps
     }
 
-@router.post("/simulate-email")
-def simulate_incoming_email(
-    payload: SimulateEmailPayload,
+@router.post("/emails/upload-batch")
+async def upload_batch_emails_and_notices(
+    files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
     admin: str = Depends(get_current_admin)
 ):
     """
-    Direct simulator for admin testing: simulates receiving an email from the UD faculty,
-    runs the LLM triage and updates the dashboard immediately.
+    Receives multiple .eml and .pdf notice files, parses them, runs LLM triage,
+    and stores them in the triage inbox for admin review.
     """
-    email_record = triage_service.process_incoming_email(
-        db=db,
-        sender=payload.sender,
-        subject=payload.subject,
-        body=payload.body,
-        attachments=payload.attachments
-    )
+    results = []
+    upload_dir = os.path.join(settings.DATA_DIR, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    for upload_file in files:
+        filename = upload_file.filename or "archivo_sin_nombre"
+        ext = os.path.splitext(filename)[1].lower()
+
+        try:
+            if ext == ".eml":
+                content = await upload_file.read()
+                parsed = parse_eml_bytes(content)
+
+                email_record = triage_service.process_incoming_email(
+                    db=db,
+                    sender=parsed["sender"],
+                    subject=parsed["subject"],
+                    body=parsed["body"],
+                    attachments=parsed["attachments"],
+                    urls=parsed["urls"]
+                )
+                results.append({
+                    "filename": filename,
+                    "type": "eml",
+                    "success": True,
+                    "email_id": email_record.id,
+                    "subject": email_record.subject,
+                    "sender": email_record.sender,
+                    "status": email_record.status,
+                    "is_relevant": email_record.is_relevant,
+                    "relevance_score": email_record.relevance_score,
+                    "triage_summary": email_record.triage_summary
+                })
+            elif ext == ".pdf":
+                clean_name = re.sub(r'[^\w\.-]', '_', os.path.basename(filename))
+                file_path = os.path.join(upload_dir, clean_name)
+
+                content = await upload_file.read()
+                with open(file_path, "wb") as f:
+                    f.write(content)
+
+                # Extract text from PDF
+                pdf_text = document_processor.extract_text_from_file(file_path)
+                if not pdf_text or len(pdf_text.strip()) < 20:
+                    pdf_text = f"Comunicado oficial adjunto en formato PDF: {filename}."
+
+                clean_title = os.path.splitext(clean_name)[0].replace("_", " ").title()
+
+                email_record = triage_service.process_incoming_email(
+                    db=db,
+                    sender="comunicados@udistrital.edu.co",
+                    subject=f"Comunicado: {clean_title}",
+                    body=pdf_text,
+                    attachments=[clean_name],
+                    urls=[]
+                )
+                results.append({
+                    "filename": filename,
+                    "type": "pdf",
+                    "success": True,
+                    "email_id": email_record.id,
+                    "subject": email_record.subject,
+                    "sender": email_record.sender,
+                    "status": email_record.status,
+                    "is_relevant": email_record.is_relevant,
+                    "relevance_score": email_record.relevance_score,
+                    "triage_summary": email_record.triage_summary
+                })
+            else:
+                results.append({
+                    "filename": filename,
+                    "success": False,
+                    "error": f"Formato '{ext}' no soportado. Debe ser .eml o .pdf"
+                })
+        except Exception as file_err:
+            results.append({
+                "filename": filename,
+                "success": False,
+                "error": str(file_err)
+            })
+
     return {
         "success": True,
-        "email_id": email_record.id,
-        "status": email_record.status,
-        "is_relevant": email_record.is_relevant,
-        "relevance_score": email_record.relevance_score,
-        "triage_summary": email_record.triage_summary,
-        "triage_reasoning": email_record.triage_reasoning,
-        "target_program": email_record.target_program
+        "processed_count": len(results),
+        "results": results
     }
-
-@router.post("/sync-emails")
-def trigger_imap_sync(
-    admin: str = Depends(get_current_admin)
-):
-    """Triggers an on-demand IMAP sync with the project's Gmail inbox."""
-    from app.services.email_listener import imap_listener
-    result = imap_listener.check_emails_now()
-    return result
