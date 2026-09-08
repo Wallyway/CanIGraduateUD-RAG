@@ -1,0 +1,9 @@
+node_modules
+.next
+.pnpm-store
+.env.local
+.env*.local
+*.log
+.git
+.DS_Store
+

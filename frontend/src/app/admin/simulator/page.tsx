@@ -331,3 +331,4 @@ const AdminSimulatorPage: React.FC = () => {
 };
 
 export default AdminSimulatorPage;
+
