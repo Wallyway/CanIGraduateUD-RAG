@@ -1,3 +1,4 @@
+import re
 import json
 import logging
 from typing import Dict, Any, List, Optional
@@ -153,7 +154,6 @@ class NormativeAuditorService:
         """
         Deterministic regex heuristic auditor ensuring 100% precision in legal clause detection.
         """
-        import re
         lower_text = " ".join(re.sub(r'[\*\#\_]', ' ', new_text.lower()).split())
         derogations = []
 

@@ -560,6 +560,7 @@ async def upload_batch_emails_and_notices(
                     "error": f"Formato '{ext}' no soportado. Debe ser .eml o .pdf"
                 })
         except Exception as file_err:
+            logger.error(f"[UploadBatch] Error processing {filename}: {file_err}", exc_info=True)
             results.append({
                 "filename": filename,
                 "success": False,

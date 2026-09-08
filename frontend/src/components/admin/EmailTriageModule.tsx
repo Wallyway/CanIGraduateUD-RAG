@@ -124,6 +124,8 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
     setSelectedUploadFiles([]);
     setUploadResults(null);
     setUploadError(null);
+    fetchEmails();
+    onDataChanged?.();
   };
 
   const fetchEmails = async () => {
@@ -861,49 +863,87 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
               )}
 
               {/* Upload Results Summary */}
-              {uploadResults && (
-                <div className="space-y-3 animate-fadeIn">
-                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2 font-medium">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>Se procesaron exitosamente {uploadResults.length} archivo(s).</span>
-                  </div>
+              {uploadResults && (() => {
+                const successCount = uploadResults.filter((r) => r.success !== false).length;
+                const failureCount = uploadResults.filter((r) => r.success === false).length;
 
-                  <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-                    {uploadResults.map((r, i) => (
-                      <div
-                        key={i}
-                        className="p-3 rounded-xl bg-stone-50 border border-stone-200 space-y-1.5"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-bold text-stone-900 truncate">
-                            {r.subject || r.filename}
-                          </span>
-                          {r.is_relevant !== undefined && (
-                            <span
-                              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                                r.is_relevant
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-stone-200 text-stone-600"
-                              }`}
-                            >
-                              {r.is_relevant ? `${r.relevance_score}% Relevante` : "Descartable"}
-                            </span>
-                          )}
-                        </div>
-                        {r.triage_summary && (
-                          <p className="text-[11px] text-stone-600 line-clamp-2">
-                            {r.triage_summary}
-                          </p>
-                        )}
-                        <div className="flex items-center gap-3 text-[10px] text-stone-400">
-                          <span>Tipo: {r.type?.toUpperCase()}</span>
-                          <span>Estado: {r.status}</span>
-                        </div>
+                return (
+                  <div className="space-y-3 animate-fadeIn">
+                    {failureCount === 0 && (
+                      <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2 font-medium">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Se procesaron exitosamente {successCount} archivo(s) para triage.</span>
                       </div>
-                    ))}
+                    )}
+                    {failureCount > 0 && successCount > 0 && (
+                      <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center gap-2 font-medium">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>{successCount} archivo(s) procesados correctamente, {failureCount} con errores.</span>
+                      </div>
+                    )}
+                    {failureCount > 0 && successCount === 0 && (
+                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2 font-medium">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>No se pudo procesar ningún archivo ({failureCount} error(es)).</span>
+                      </div>
+                    )}
+
+                    <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                      {uploadResults.map((r, i) => {
+                        const isOk = r.success !== false;
+                        return (
+                          <div
+                            key={i}
+                            className={`p-3 rounded-xl border space-y-1.5 ${
+                              isOk
+                                ? "bg-stone-50 border-stone-200"
+                                : "bg-rose-50/50 border-rose-200"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-bold text-stone-900 truncate">
+                                {r.subject || r.filename}
+                              </span>
+                              {isOk && r.is_relevant !== undefined && (
+                                <span
+                                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                    r.is_relevant
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : "bg-stone-200 text-stone-600"
+                                  }`}
+                                >
+                                  {r.is_relevant ? `${r.relevance_score}% Relevante` : "Descartable"}
+                                </span>
+                              )}
+                              {!isOk && (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800">
+                                  Error
+                                </span>
+                              )}
+                            </div>
+                            {r.error && (
+                              <p className="text-[11px] text-rose-700 font-medium">
+                                Error: {r.error}
+                              </p>
+                            )}
+                            {r.triage_summary && (
+                              <p className="text-[11px] text-stone-600 line-clamp-2">
+                                {r.triage_summary}
+                              </p>
+                            )}
+                            {isOk && (
+                              <div className="flex items-center gap-3 text-[10px] text-stone-400">
+                                <span>Tipo: {r.type?.toUpperCase()}</span>
+                                <span>Estado: {r.status}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Modal Footer */}
