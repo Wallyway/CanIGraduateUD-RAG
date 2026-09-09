@@ -7,7 +7,6 @@ import {
   Sparkles,
   RotateCcw,
   GraduationCap,
-  ArrowUpRight,
   HelpCircle,
   MessageSquareHeart,
   Send,
@@ -16,7 +15,6 @@ import {
   Star,
   Mail,
 } from "lucide-react";
-import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { streamChat, getDocumentPdfUrl, sendSessionFeedback } from "@/lib/api";
 import {
@@ -457,13 +455,6 @@ export const ChatInterface: React.FC = () => {
               <RotateCcw className="w-4 h-4" />
             </button>
           )}
-          <Link
-            href="/admin"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-300 hover:text-white bg-white/[0.06] hover:bg-white/[0.12] px-3 py-1.5 rounded-full border border-white/10 transition-all duration-200 active:scale-95 backdrop-blur-md"
-          >
-            <span>Panel Admin</span>
-            <ArrowUpRight className="w-3 h-3 text-neutral-400" />
-          </Link>
         </div>
       </header>
 

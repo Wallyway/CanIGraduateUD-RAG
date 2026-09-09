@@ -8,7 +8,7 @@ import { setAdminToken } from "@/lib/storage";
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("admin_ud");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -67,7 +67,7 @@ export default function AdminLoginPage() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin_ud"
+                placeholder="Ingresa tu usuario"
                 className="w-full bg-zinc-950 border border-zinc-800 focus:border-red-600 focus:ring-1 focus:ring-red-600 rounded-xl py-2.5 pl-10 pr-3 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition"
               />
             </div>
@@ -104,12 +104,6 @@ export default function AdminLoginPage() {
             </button>
           </div>
         </form>
-
-        <div className="text-center pt-2 border-t border-zinc-800/80">
-          <p className="text-[11px] text-zinc-500 font-mono">
-            Credencial por defecto: <span className="text-amber-400/80">admin_ud</span> / <span className="text-amber-400/80">graduacion_sistemas_2026!</span>
-          </p>
-        </div>
       </div>
     </div>
   );
