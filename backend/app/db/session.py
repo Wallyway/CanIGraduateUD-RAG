@@ -28,6 +28,7 @@ def init_db():
             ("supersedes_id", "INTEGER"),
             ("superseded_by_title", "VARCHAR(255)"),
             ("markdown_content", "TEXT"),
+            ("scan_image_path", "VARCHAR(500)"),
             ("original_pdf_url", "VARCHAR(500)")
         ]:
             try:
@@ -35,6 +36,25 @@ def init_db():
                 conn.commit()
             except Exception:
                 pass
+        try:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS session_feedbacks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id VARCHAR(100),
+                    user_email VARCHAR(255),
+                    feedback_type VARCHAR(50) DEFAULT 'general',
+                    rating INTEGER,
+                    comments TEXT NOT NULL,
+                    has_transcript BOOLEAN DEFAULT 0,
+                    transcript_json TEXT,
+                    target_email VARCHAR(255) DEFAULT 'canigraduateud@gmail.com',
+                    status VARCHAR(50) DEFAULT 'RECEIVED',
+                    created_at DATETIME
+                )
+            """))
+            conn.commit()
+        except Exception:
+            pass
 
     # Ensure default system settings
     db = SessionLocal()

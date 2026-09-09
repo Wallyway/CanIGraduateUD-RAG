@@ -27,29 +27,41 @@ class TriageService:
         """
         system_prompt = (
             "Eres el Agente Clasificador de Comunicados de la Universidad Distrital Francisco José de Caldas.\n"
-            "Tu tarea es evaluar correos electrónicos recibidos en la cuenta institucional y determinar si son "
-            "relevantes para estudiantes de INGENIERÍA DE SISTEMAS respecto a:\n"
-            "- Modalidades y opciones de grado (monografía, pasantía, materias de posgrado, etc.)\n"
-            "- Calendario académico, fechas de grado, grados por ventanilla o ceremonias\n"
-            "- Paz y salvos, ILUD (inglés B2), o trámites ante el Consejo de Facultad / Proyecto Curricular\n"
-            "- Convocatorias oficiales de la Facultad de Ingeniería\n\n"
+            "Tu tarea es evaluar comunicados, acuerdos, resoluciones y correos institucionales para determinar si son "
+            "relevantes para la base de conocimiento de estudiantes de INGENIERÍA DE SISTEMAS (Facultad de Ingeniería).\n\n"
+            "ÁREAS CLAVE DE RELEVANCIA:\n"
+            "1. Modalidades de Trabajo de Grado (monografía, pasantía, materias de posgrado, investigación, etc.)\n"
+            "2. Reglamentación de Trabajo de Grado para pregrado (Acuerdos del Consejo Académico o Superior Universitario)\n"
+            "3. Inscripción a grados, instructivos de Cóndor, fechas, paz y salvos, ceremonias o grados por ventanilla\n"
+            "4. Créditos académicos, requisitos de segunda lengua (ILUD B2), derechos pecuniarios y derechos de grado\n"
+            "5. Trámites y normativas ante el Consejo de Facultad de Ingeniería o Proyecto Curricular de Ingeniería de Sistemas\n\n"
+            "REGLAS ESTRICTAS DE EVALUACIÓN:\n"
+            "- REGLA DE ALCANCE GENERAL: Toda norma institucional de la Universidad Distrital que aplique a 'PREGRADO', "
+            "'TRABAJOS DE GRADO', 'MODALIDADES DE GRADO', 'INSCRIPCIÓN DE GRADOS' o 'ESTUDIANTES DE LA UNIVERSIDAD' "
+            "APLICA POR DERECHO PROPIO a los estudiantes de INGENIERÍA DE SISTEMAS. NUNCA la descartes por no mencionar "
+            "textualmente 'Ingeniería de Sistemas'. Debe ser clasificada con is_relevant: true, relevance_score: entre 85.0 y 98.0, "
+            "y recommended_action: 'INDEX'.\n"
+            "- Solo clasifica como no relevante (is_relevant: false, relevance_score < 40.0) comunicados exclusivamente dirigidos a "
+            "otras facultades (ej. artes plásticas sin alcance institucional), asuntos de pensionados, o licitaciones no académicas.\n\n"
             "Debes responder ÚNICAMENTE un objeto JSON válido con las siguientes claves exactas:\n"
             "{\n"
             '  "is_relevant": true|false,\n'
             '  "relevance_score": float entre 0.0 y 100.0,\n'
             '  "target_program": "Ingeniería de Sistemas" o programa identificado,\n'
             '  "summary": "Resumen conciso del comunicado en 2-3 oraciones",\n'
-            '  "reasoning": "Explicación breve de por qué es relevante o por qué se descarta",\n'
+            '  "reasoning": "Explicación clara de por qué es relevante o por qué se descarta",\n'
             '  "recommended_action": "INDEX" o "IGNORE"\n'
             "}"
         )
+
+        body_sample = body[:7500].strip() if body else ""
 
         user_content = (
             f"REMITENTE: {sender}\n"
             f"ASUNTO: {subject}\n"
             f"ARCHIVOS ADJUNTOS: {', '.join(attachments or ['Ninguno'])}\n"
             f"ENLACES DETECTADOS: {', '.join(urls or ['Ninguno'])}\n\n"
-            f"CUERPO DEL CORREO:\n{body[:3000]}"
+            f"CUERPO / TEXTO DEL DOCUMENTO:\n{body_sample}"
         )
 
         messages = [
@@ -58,6 +70,30 @@ class TriageService:
         ]
 
         result = llm_adapter.generate_json(messages)
+
+        # Guardrail: Never let core undergraduate graduation regulations be marked as irrelevant
+        norm_text = (subject + " " + " ".join(attachments or []) + " " + (body[:3000] if body else "")).lower()
+        core_grad_cues = [
+            "modalidades de trabajo de grado",
+            "modalidad de trabajo de grado",
+            "reglamenta el trabajo de grado",
+            "reglamentación de trabajo de grado",
+            "inscripción para grados",
+            "inscripción a grados",
+            "ceremonias de graduación",
+            "ceremonia de graduación",
+            "derechos de grado"
+        ]
+        if any(cue in norm_text for cue in core_grad_cues):
+            if not result.get("is_relevant", False) or float(result.get("relevance_score", 0.0)) < 60.0:
+                logger.info("Guardrail: Correcting falsely low relevance score for core graduation notice.")
+                result["is_relevant"] = True
+                result["relevance_score"] = max(float(result.get("relevance_score", 0.0)), 92.0)
+                result["recommended_action"] = "INDEX"
+                result["target_program"] = "Ingeniería de Sistemas"
+                if not result.get("summary") or "no se refiere" in result.get("reasoning", "").lower():
+                    result["reasoning"] = "Reglamenta aspectos oficiales de grado para estudiantes de pregrado de la Universidad Distrital."
+
         return result
 
     def process_incoming_email(
@@ -155,6 +191,7 @@ class TriageService:
     def index_email_content(self, db: Session, email: EmailNotice) -> DocumentItem:
         """Indexes the approved email body and attachments into ChromaDB."""
         # 0. Check and apply any derogations/modifications against older regulations
+        superseded_target_id = None
         try:
             audit_result = normative_auditor.audit_derogations(
                 new_text=email.body_text,
@@ -163,16 +200,18 @@ class TriageService:
                 db=db
             )
             if audit_result.get("has_derogation"):
-                normative_auditor.apply_derogations(
+                applied = normative_auditor.apply_derogations(
                     audit_result=audit_result,
                     new_doc_title=f"Comunicado: {email.subject}",
                     db=db,
                     min_confidence=85.0
                 )
+                if applied:
+                    superseded_target_id = applied[0].get("document_id")
         except Exception as aud_err:
             logger.warning(f"Error applying derogations during email indexing: {aud_err}")
 
-        # 1. Index the email body as a notice document
+        # 1. Index the email body as a notice document record
         doc_item = DocumentItem(
             title=f"Comunicado: {email.subject}",
             filename=f"email_{email.id}.txt",
@@ -182,25 +221,45 @@ class TriageService:
             email_id=email.id,
             resolution_number=f"Comunicado Correo UD ({email.sender})",
             effective_date=email.received_at.strftime("%Y-%m-%d") if email.received_at else None,
+            markdown_content=email.body_text,
+            supersedes_id=superseded_target_id,
             status="INDEXED"
         )
         db.add(doc_item)
         db.commit()
         db.refresh(doc_item)
 
-        # Chunk and upsert email body into Chroma
-        metadata = {
-            "document_id": doc_item.id,
-            "title": doc_item.title,
-            "filename": doc_item.filename,
-            "resolution_number": doc_item.resolution_number,
-            "source_type": doc_item.source_type,
-            "effective_date": doc_item.effective_date or ""
-        }
-        chunks, metas, ids = document_processor.chunk_normative_text(email.body_text, metadata)
-        if chunks:
-            vector_store.add_chunks(chunks, metas, ids)
-            doc_item.chunk_count = len(chunks)
+        # Check if email contains document attachments that will be indexed as canonical
+        has_doc_attachments = False
+        try:
+            attachment_names = json.loads(email.attachment_paths or "[]")
+            upload_dir = os.path.join(settings.DATA_DIR, "uploads")
+            for att_name in attachment_names:
+                ext = os.path.splitext(att_name)[1].lower()
+                if ext in [".pdf", ".txt", ".md"] and os.path.exists(os.path.join(upload_dir, att_name)):
+                    has_doc_attachments = True
+                    break
+        except Exception:
+            pass
+
+        # Only chunk email body into ChromaDB if there are no attached documents,
+        # or if the email body is a genuine message (< 2500 chars) to prevent 70+ duplicate chunks
+        if not has_doc_attachments or len(email.body_text.strip()) < 2500:
+            metadata = {
+                "document_id": doc_item.id,
+                "title": doc_item.title,
+                "filename": doc_item.filename,
+                "resolution_number": doc_item.resolution_number,
+                "source_type": doc_item.source_type,
+                "effective_date": doc_item.effective_date or ""
+            }
+            chunks, metas, ids = document_processor.chunk_normative_text(email.body_text, metadata)
+            if chunks:
+                vector_store.add_chunks(chunks, metas, ids)
+                doc_item.chunk_count = len(chunks)
+                db.commit()
+        else:
+            doc_item.chunk_count = 0
             db.commit()
 
         # 2. Index any attached PDFs or documents
@@ -214,16 +273,22 @@ class TriageService:
                     if ext in [".pdf", ".txt", ".md"]:
                         att_text = document_processor.extract_text_from_file(att_path)
                         if att_text and len(att_text.strip()) > 50:
+                            official_meta = document_processor.extract_official_metadata(att_text)
+                            att_title = official_meta.get("title") or f"Adjunto: {att_name} ({email.subject})"
+                            att_res_num = official_meta.get("resolution_number") or f"Adjunto de Comunicado ({email.sender})"
+
                             att_doc = DocumentItem(
-                                title=f"Adjunto: {att_name} ({email.subject})",
+                                title=att_title,
                                 filename=att_name,
                                 file_path=att_path,
                                 file_type=ext.replace(".", ""),
                                 source_type="EMAIL_ATTACHMENT",
                                 email_id=email.id,
-                                resolution_number=f"Adjunto de Comunicado ({email.sender})",
+                                resolution_number=att_res_num,
                                 effective_date=doc_item.effective_date,
                                 validity_status="VIGENTE",
+                                markdown_content=att_text,
+                                supersedes_id=superseded_target_id,
                                 status="INDEXED"
                             )
                             db.add(att_doc)

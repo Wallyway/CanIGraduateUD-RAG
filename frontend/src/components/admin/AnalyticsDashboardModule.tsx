@@ -24,7 +24,8 @@ import {
   Activity,
   Layers,
   Check,
-  Download
+  Download,
+  GraduationCap
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -50,10 +51,13 @@ interface AnalyticsData {
     avg_latency?: number;
     total_documents?: number;
     total_vector_chunks?: number;
+    sistemas_queries_count?: number;
+    other_faculty_queries_count?: number;
   };
   monthly_series: Array<{
     label: string;
     consultas: number;
+    consultas_sistemas?: number;
     documentos: number;
     cobertura?: number;
     brechas?: number;
@@ -88,6 +92,21 @@ interface AnalyticsData {
     total_chunks: number;
     total_documents: number;
     status: string;
+  };
+  other_faculty_interest?: {
+    total_queries: number;
+    percentage_of_all_traffic: number;
+    careers_ranking: Array<{
+      career: string;
+      count: number;
+      percentage: number;
+    }>;
+    recent_queries: Array<{
+      id: number;
+      query: string;
+      career: string;
+      date: string;
+    }>;
   };
 }
 
@@ -126,7 +145,7 @@ export function AnalyticsDashboardModule() {
   const [activeMetric, setActiveMetric] = useState<MetricKey>("consultas");
   const [timeRange, setTimeRange] = useState<"6m" | "30d" | "all">("6m");
   const [isHealthModalOpen, setIsHealthModalOpen] = useState(false);
-  const [activeTableTab, setActiveTableTab] = useState<"top_questions" | "gaps">("top_questions");
+  const [activeTableTab, setActiveTableTab] = useState<"top_questions" | "gaps" | "other_careers">("top_questions");
 
   const fetchAnalytics = async () => {
     setIsLoading(true);
@@ -191,7 +210,9 @@ export function AnalyticsDashboardModule() {
       value: `${data.kpis.total_all_time_queries}`,
       delta: `${data.kpis.query_growth_percentage > 0 ? "+" : ""}${data.kpis.query_growth_percentage}%`,
       isPositive: data.kpis.query_growth_percentage >= 0,
-      subtext: "vs mes anterior",
+      subtext: (data.kpis.other_faculty_queries_count && data.kpis.other_faculty_queries_count > 0)
+        ? `${data.kpis.sistemas_queries_count ?? data.kpis.total_all_time_queries} Sistemas • ${data.kpis.other_faculty_queries_count} Otras Fac.`
+        : "vs mes anterior",
       color: "text-orange-600",
       strokeColor: "#EA580C",
       fillGradId: "grad-consultas",
@@ -199,11 +220,11 @@ export function AnalyticsDashboardModule() {
       icon: MessageSquare,
     },
     cobertura: {
-      title: "Tasa Cobertura RAG",
+      title: "Tasa Cobertura (Sistemas V1)",
       value: `${data.kpis.rag_coverage_rate}%`,
-      delta: hasQueries ? "con citas normativas" : "sin consultas",
+      delta: hasQueries ? "calibrado Sistemas" : "sin consultas",
       isPositive: data.kpis.rag_coverage_rate >= 80,
-      subtext: "respaldo normativo",
+      subtext: `${data.kpis.sistemas_queries_count ?? data.kpis.total_all_time_queries} consultas evaluadas`,
       color: "text-blue-600",
       strokeColor: "#2563EB",
       fillGradId: "grad-cobertura",
@@ -211,11 +232,11 @@ export function AnalyticsDashboardModule() {
       icon: ShieldCheck,
     },
     brechas: {
-      title: "Tasa de Brechas",
+      title: "Tasa de Brechas (Sistemas V1)",
       value: `${data.kpis.knowledge_gaps_rate ?? 0}%`,
-      delta: `${data.knowledge_gaps.length} registradas`,
+      delta: `${data.knowledge_gaps.length} normativas`,
       isPositive: (data.kpis.knowledge_gaps_rate ?? 0) === 0,
-      subtext: "dudas sin resolución",
+      subtext: "acuerdos faltantes en Sistemas",
       color: "text-rose-600",
       strokeColor: "#E11D48",
       fillGradId: "grad-brechas",
@@ -648,7 +669,18 @@ export function AnalyticsDashboardModule() {
               }`}
             >
               <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
-              <span>Brechas de Conocimiento ({data.knowledge_gaps.length})</span>
+              <span>Brechas en Sistemas ({data.knowledge_gaps.length})</span>
+            </button>
+            <button
+              onClick={() => setActiveTableTab("other_careers")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
+                activeTableTab === "other_careers"
+                  ? "bg-indigo-950 text-indigo-200 shadow-xs border border-indigo-800/80"
+                  : "text-stone-600 hover:text-stone-900 hover:bg-stone-100"
+              }`}
+            >
+              <GraduationCap className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Demanda Otras Facultades ({data.other_faculty_interest?.total_queries ?? 0})</span>
             </button>
           </div>
         </div>
@@ -753,6 +785,110 @@ export function AnalyticsDashboardModule() {
                 <p className="text-xs font-semibold text-emerald-800">No se registran brechas de conocimiento</p>
                 <p className="text-[11px] text-stone-500 max-w-md mx-auto">
                   Todas las consultas de los estudiantes cuentan con respaldo suficiente en la base de conocimiento normativo.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTableTab === "other_careers" && (
+          <div className="space-y-4">
+            <div className="p-4 bg-indigo-50/70 border border-indigo-100 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-bold uppercase tracking-wider border border-indigo-200">
+                    Fase Piloto V1
+                  </span>
+                  <h4 className="text-xs font-bold text-indigo-950">
+                    Interés y Demanda de Expansión a Otras Facultades
+                  </h4>
+                </div>
+                <p className="text-[11px] text-indigo-900/80 max-w-2xl leading-relaxed">
+                  Las métricas de cobertura y confianza del RAG evalúan exclusivamente a <strong>Ingeniería de Sistemas</strong>. Las consultas de otros programas son interceptadas amigablemente por el guardrail institucional sin penalizar el modelo, y se registran aquí para medir qué carreras tienen mayor demanda de incorporación.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="text-center px-3 py-1.5 bg-white rounded-xl border border-indigo-200/80 shadow-2xs">
+                  <div className="text-lg font-bold text-indigo-950 font-mono">
+                    {data.other_faculty_interest?.total_queries ?? 0}
+                  </div>
+                  <div className="text-[10px] font-medium text-stone-500">Consultas Recibidas</div>
+                </div>
+                <div className="text-center px-3 py-1.5 bg-white rounded-xl border border-indigo-200/80 shadow-2xs">
+                  <div className="text-lg font-bold text-indigo-600 font-mono">
+                    {data.other_faculty_interest?.percentage_of_all_traffic ?? 0}%
+                  </div>
+                  <div className="text-[10px] font-medium text-stone-500">Del Tráfico Total</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Ranking de carreras interesadas */}
+            {data.other_faculty_interest && data.other_faculty_interest.careers_ranking.length > 0 && (
+              <div className="space-y-2">
+                <h5 className="text-[11px] font-bold text-stone-600 uppercase tracking-wider">
+                  Programas Académicos Interesados
+                </h5>
+                <div className="flex flex-wrap gap-2">
+                  {data.other_faculty_interest.careers_ranking.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="px-3 py-1.5 bg-stone-50 hover:bg-stone-100 rounded-xl border border-stone-200 flex items-center gap-2 text-xs transition"
+                    >
+                      <span className="font-semibold text-stone-900">{item.career}</span>
+                      <span className="px-1.5 py-0.5 rounded-md bg-stone-200 text-stone-700 text-[10px] font-mono font-bold">
+                        {item.count} {item.count === 1 ? "consulta" : "consultas"} ({item.percentage}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Tabla de consultas de otras facultades */}
+            {data.other_faculty_interest && data.other_faculty_interest.recent_queries.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="text-stone-500 border-b border-stone-100 bg-indigo-50/30">
+                    <tr>
+                      <th className="py-2.5 px-3 font-semibold">Consulta del Estudiante</th>
+                      <th className="py-2.5 px-3 font-semibold">Carrera / Facultad Detectada</th>
+                      <th className="py-2.5 px-3 font-semibold">Fecha y Hora</th>
+                      <th className="py-2.5 px-3 font-semibold">Acción del Guardrail</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100 text-stone-700">
+                    {data.other_faculty_interest.recent_queries.map((q) => (
+                      <tr key={q.id} className="hover:bg-indigo-50/20 transition">
+                        <td className="py-3 px-3 font-medium text-stone-900 max-w-md">
+                          {q.query}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-semibold">
+                            {q.career}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-stone-400 text-[11px] font-mono">
+                          {q.date}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold border border-emerald-200">
+                            <Check className="w-3 h-3" />
+                            Redirección Amigable Realizada
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="py-12 text-center text-stone-400 space-y-1.5 bg-stone-50/50 rounded-xl border border-dashed border-stone-200">
+                <GraduationCap className="w-7 h-7 mx-auto text-stone-300" />
+                <p className="text-xs font-semibold text-stone-700">No se registran consultas de otras carreras</p>
+                <p className="text-[11px] text-stone-400 max-w-md mx-auto">
+                  Cuando estudiantes de otras facultades consulten el portal, sus preguntas y programas aparecerán registrados aquí.
                 </p>
               </div>
             )}

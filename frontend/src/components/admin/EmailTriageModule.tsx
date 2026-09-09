@@ -24,7 +24,11 @@ import {
   Trash2,
   X,
   AlertCircle,
-  Loader2
+  Loader2,
+  PenTool,
+  Info,
+  FileCode,
+  Camera
 } from "lucide-react";
 import {
   getAdminEmails,
@@ -32,7 +36,8 @@ import {
   rejectEmail,
   updateEmailMetadata,
   batchActionEmails,
-  uploadBatchTriageFiles
+  uploadBatchTriageFiles,
+  createMarkdownEmail
 } from "@/lib/api";
 
 export interface EmailNoticeData {
@@ -68,6 +73,7 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
   // Editing state for drawer
   const [isEditing, setIsEditing] = useState(false);
   const [editSubject, setEditSubject] = useState("");
+  const [editSender, setEditSender] = useState("");
   const [editSummary, setEditSummary] = useState("");
   const [editProgram, setEditProgram] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -76,10 +82,19 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
 
   // Batch upload modal state
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [uploadTab, setUploadTab] = useState<"files" | "markdown">("files");
   const [selectedUploadFiles, setSelectedUploadFiles] = useState<File[]>([]);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [uploadResults, setUploadResults] = useState<any[] | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Markdown drafting state
+  const [mdSubject, setMdSubject] = useState("");
+  const [mdSender, setMdSender] = useState("Rectoría / Consejo Académico <rectoria@udistrital.edu.co>");
+  const [mdContent, setMdContent] = useState("");
+  const [mdScanFile, setMdScanFile] = useState<File | null>(null);
+  const [mdScanPreviewUrl, setMdScanPreviewUrl] = useState<string | null>(null);
+  const [isCreatingMd, setIsCreatingMd] = useState(false);
 
   const handleFilesSelected = (files: FileList | null) => {
     if (!files) return;
@@ -87,12 +102,12 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       const ext = f.name.split('.').pop()?.toLowerCase();
-      if (ext === 'eml' || ext === 'pdf') {
+      if (ext === 'eml' || ext === 'pdf' || ext === 'md' || ext === 'markdown' || ext === 'txt') {
         validFiles.push(f);
       }
     }
     if (validFiles.length === 0) {
-      alert("Por favor selecciona únicamente archivos con extensión .eml o .pdf");
+      alert("Por favor selecciona archivos con extensión .eml, .pdf, .md o .txt");
       return;
     }
     setSelectedUploadFiles((prev) => [...prev, ...validFiles]);
@@ -120,11 +135,62 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
     }
   };
 
+  const handleCreateMarkdownEmail = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!mdSubject.trim()) {
+      alert("Por favor ingresa un asunto o título para el comunicado.");
+      return;
+    }
+    if (!mdContent.trim() || mdContent.trim().length < 10) {
+      alert("El contenido en Markdown debe contener al menos 10 caracteres.");
+      return;
+    }
+
+    setIsCreatingMd(true);
+    setUploadError(null);
+    try {
+      const res = await createMarkdownEmail({
+        subject: mdSubject.trim(),
+        markdown_content: mdContent.trim(),
+        sender: mdSender.trim() || undefined,
+        scan_file: mdScanFile
+      });
+      setUploadResults([
+        {
+          filename: `${mdSubject.trim()}.md`,
+          subject: res.subject,
+          is_relevant: res.is_relevant,
+          relevance_score: res.relevance_score,
+          triage_summary: res.triage_summary,
+          status: res.status,
+          type: "markdown",
+          success: true
+        }
+      ]);
+      setMdSubject("");
+      setMdContent("");
+      if (mdScanPreviewUrl) URL.revokeObjectURL(mdScanPreviewUrl);
+      setMdScanFile(null);
+      setMdScanPreviewUrl(null);
+      await fetchEmails();
+      onDataChanged?.();
+    } catch (err: any) {
+      setUploadError(err.message || "Error al registrar y evaluar el comunicado en Markdown");
+    } finally {
+      setIsCreatingMd(false);
+    }
+  };
+
   const handleCloseUploadModal = () => {
     setIsUploadModalOpen(false);
     setSelectedUploadFiles([]);
     setUploadResults(null);
     setUploadError(null);
+    setMdSubject("");
+    setMdContent("");
+    if (mdScanPreviewUrl) URL.revokeObjectURL(mdScanPreviewUrl);
+    setMdScanFile(null);
+    setMdScanPreviewUrl(null);
     fetchEmails();
     onDataChanged?.();
   };
@@ -155,6 +221,7 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
     setSelectedEmail(em);
     setIsEditing(false);
     setEditSubject(em.subject);
+    setEditSender(em.sender || "");
     setEditSummary(em.triage_summary || "");
     setEditProgram(em.target_program || "Ingeniería de Sistemas");
   };
@@ -195,10 +262,18 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
     try {
       await updateEmailMetadata(selectedEmail.id, {
         subject: editSubject,
+        sender: editSender.trim() || undefined,
         triage_summary: editSummary,
         target_program: editProgram,
       });
       setIsEditing(false);
+      setSelectedEmail((prev) => prev ? {
+        ...prev,
+        subject: editSubject,
+        sender: editSender.trim() || prev.sender,
+        triage_summary: editSummary,
+        target_program: editProgram,
+      } : null);
       await fetchEmails();
     } catch (e: any) {
       alert("Error al guardar: " + e.message);
@@ -333,16 +408,32 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
+              setUploadTab("markdown");
+              setSelectedUploadFiles([]);
+              setUploadResults(null);
+              setUploadError(null);
+              setIsUploadModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#C2410C] bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl transition shadow-xs"
+            title="Redactar o pegar texto de un comunicado en Markdown"
+          >
+            <PenTool className="w-4 h-4" />
+            <span>Redactar Markdown</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setUploadTab("files");
               setSelectedUploadFiles([]);
               setUploadResults(null);
               setUploadError(null);
               setIsUploadModalOpen(true);
             }}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#C2410C] hover:bg-[#9A3412] rounded-xl transition shadow-xs"
-            title="Cargar archivos .EML o PDFs de comunicados"
+            title="Cargar archivos .EML, .PDF o .md de comunicados"
           >
             <UploadCloud className="w-4 h-4" />
-            <span>+ Importar Comunicados (.EML / PDF)</span>
+            <span>+ Importar Archivos (.EML / PDF / .md)</span>
           </button>
 
           <button
@@ -570,6 +661,7 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                       onClick={() => {
                         setIsEditing(!isEditing);
                         setEditSubject(selectedEmail.subject);
+                        setEditSender(selectedEmail.sender || "");
                         setEditSummary(selectedEmail.triage_summary || "");
                         setEditProgram(selectedEmail.target_program || "Ingeniería de Sistemas");
                       }}
@@ -642,6 +734,21 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                     </div>
                     <div>
                       <label className="text-xs font-semibold text-stone-600 block mb-1">
+                        Remitente / Entidad Emisora o Correo Responsable (Opcional)
+                      </label>
+                      <input
+                        type="text"
+                        value={editSender}
+                        onChange={(e) => setEditSender(e.target.value)}
+                        placeholder="Ej: Consejo de Facultad <ingenieria@udistrital.edu.co> o Decanatura"
+                        className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-[#C2410C]/20 focus:border-[#C2410C]"
+                      />
+                      <p className="text-[11px] text-stone-400 mt-1">
+                        Si el comunicado proviene de un PDF o escaneo, puedes ingresar manualmente la entidad o correo responsable de la información.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-stone-600 block mb-1">
                         Programa Aplicable
                       </label>
                       <input
@@ -662,14 +769,24 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                         className="w-full text-xs p-2.5 bg-stone-50 border border-stone-200 rounded-xl"
                       />
                     </div>
-                    <button
-                      onClick={handleSaveEdit}
-                      disabled={isSaving}
-                      className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-medium rounded-xl flex items-center gap-1.5"
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      <span>{isSaving ? "Guardando..." : "Guardar Cambios"}</span>
-                    </button>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={handleSaveEdit}
+                        disabled={isSaving}
+                        className="px-3.5 py-1.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-medium rounded-xl flex items-center gap-1.5 transition"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>{isSaving ? "Guardando..." : "Guardar Cambios"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditing(false)}
+                        disabled={isSaving}
+                        className="px-3 py-1.5 text-stone-600 hover:text-stone-900 text-xs font-medium transition"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div>
@@ -779,7 +896,7 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                     Importar Comunicados a la Bandeja de Triage
                   </h3>
                   <p className="text-[11px] text-stone-500">
-                    Carga archivos .EML (correos institucionales) o circulares en PDF para evaluación LLM.
+                    Carga archivos (.EML, .PDF, .md) o redacta/pega Markdown para evaluación LLM.
                   </p>
                 </div>
               </div>
@@ -791,103 +908,268 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
               </button>
             </div>
 
+            {/* Modal Tabs */}
+            <div className="flex border-b border-stone-200 px-6 pt-3 bg-stone-50/50 gap-4 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setUploadTab("files")}
+                className={`pb-2.5 flex items-center gap-2 border-b-2 transition ${
+                  uploadTab === "files"
+                    ? "border-[#C2410C] text-[#C2410C]"
+                    : "border-transparent text-stone-500 hover:text-stone-800"
+                }`}
+              >
+                <UploadCloud className="w-4 h-4" />
+                <span>Cargar Archivos (.EML, .PDF, .md)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setUploadTab("markdown")}
+                className={`pb-2.5 flex items-center gap-2 border-b-2 transition ${
+                  uploadTab === "markdown"
+                    ? "border-[#C2410C] text-[#C2410C]"
+                    : "border-transparent text-stone-500 hover:text-stone-800"
+                }`}
+              >
+                <PenTool className="w-4 h-4" />
+                <span>Redactar / Pegar Markdown Directo</span>
+              </button>
+            </div>
+
             {/* Modal Body */}
             <div className="p-6 overflow-y-auto space-y-4 flex-1">
-              {/* Drag & Drop Zone */}
-              {!uploadResults && (
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleFilesSelected(e.dataTransfer.files);
-                  }}
-                  className="border-2 border-dashed border-stone-300 hover:border-[#C2410C] bg-stone-50/50 hover:bg-orange-50/20 rounded-2xl p-6 text-center transition cursor-pointer"
-                  onClick={() => document.getElementById("batch-triage-file-input")?.click()}
-                >
-                  <input
-                    id="batch-triage-file-input"
-                    type="file"
-                    multiple
-                    accept=".eml,.pdf"
-                    className="hidden"
-                    onChange={(e) => handleFilesSelected(e.target.files)}
-                  />
-                  <UploadCloud className="w-10 h-10 text-stone-400 mx-auto mb-2" />
-                  <p className="text-xs font-semibold text-stone-800">
-                    Arrastra aquí tus archivos <span className="text-[#C2410C]">.EML</span> o <span className="text-[#C2410C]">.PDF</span>
-                  </p>
-                  <p className="text-[11px] text-stone-500 mt-1">
-                    o haz clic para explorar en tu equipo (admite selección múltiple)
-                  </p>
-                </div>
-              )}
+              {uploadTab === "files" ? (
+                <>
+                  {/* Drag & Drop Zone */}
+                  {!uploadResults && (
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleFilesSelected(e.dataTransfer.files);
+                      }}
+                      className="border-2 border-dashed border-stone-300 hover:border-[#C2410C] bg-stone-50/50 hover:bg-orange-50/20 rounded-2xl p-6 text-center transition cursor-pointer"
+                      onClick={() => document.getElementById("batch-triage-file-input")?.click()}
+                    >
+                      <input
+                        id="batch-triage-file-input"
+                        type="file"
+                        multiple
+                        accept=".eml,.pdf,.md,.markdown,.txt"
+                        className="hidden"
+                        onChange={(e) => handleFilesSelected(e.target.files)}
+                      />
+                      <UploadCloud className="w-10 h-10 text-stone-400 mx-auto mb-2" />
+                      <p className="text-xs font-semibold text-stone-800">
+                        Arrastra aquí tus archivos <span className="text-[#C2410C]">.EML</span>, <span className="text-[#C2410C]">.PDF</span> o <span className="text-[#C2410C]">.MD</span>
+                      </p>
+                      <p className="text-[11px] text-stone-500 mt-1">
+                        o haz clic para explorar en tu equipo (admite selección múltiple)
+                      </p>
+                    </div>
+                  )}
 
-              {/* Selected Files List */}
-              {selectedUploadFiles.length > 0 && !uploadResults && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs font-semibold text-stone-700">
-                    <span>Archivos listos para procesar ({selectedUploadFiles.length})</span>
-                    {!isUploadingFiles && (
-                      <button
-                        onClick={() => setSelectedUploadFiles([])}
-                        className="text-[11px] text-red-600 hover:underline"
-                      >
-                        Limpiar lista
-                      </button>
+                  {/* Selected Files List */}
+                  {selectedUploadFiles.length > 0 && !uploadResults && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold text-stone-700">
+                        <span>Archivos listos para procesar ({selectedUploadFiles.length})</span>
+                        {!isUploadingFiles && (
+                          <button
+                            onClick={() => setSelectedUploadFiles([])}
+                            className="text-[11px] text-red-600 hover:underline"
+                          >
+                            Limpiar lista
+                          </button>
+                        )}
+                      </div>
+                      <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                        {selectedUploadFiles.map((file, idx) => {
+                          const ext = file.name.split('.').pop()?.toLowerCase();
+                          const sizeKb = (file.size / 1024).toFixed(1);
+                          return (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between p-2 rounded-xl bg-stone-50 border border-stone-200 text-xs"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                    ext === "eml"
+                                      ? "bg-blue-100 text-blue-800"
+                                      : ext === "pdf"
+                                      ? "bg-red-100 text-red-800"
+                                      : ext === "md" || ext === "markdown"
+                                      ? "bg-purple-100 text-purple-800"
+                                      : "bg-stone-200 text-stone-800"
+                                  }`}
+                                >
+                                  {ext?.toUpperCase()}
+                                </span>
+                                <span className="truncate font-medium text-stone-800">{file.name}</span>
+                                <span className="text-[10px] text-stone-400">({sizeKb} KB)</span>
+                              </div>
+                              {!isUploadingFiles && (
+                                <button
+                                  onClick={() => removeUploadFile(idx)}
+                                  className="p-1 text-stone-400 hover:text-red-600 transition"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Uploading progress indicator */}
+                  {isUploadingFiles && (
+                    <div className="p-6 text-center space-y-3 bg-stone-50 rounded-2xl border border-stone-200">
+                      <Loader2 className="w-8 h-8 text-[#C2410C] animate-spin mx-auto" />
+                      <p className="text-xs font-bold text-stone-900">
+                        Procesando comunicados con el Agente LLM...
+                      </p>
+                      <p className="text-[11px] text-stone-500">
+                        Extrayendo cabeceras, adjuntos, y evaluando pertinencia institucional...
+                      </p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* Markdown Direct Tab */
+                <form onSubmit={handleCreateMarkdownEmail} className="space-y-4 text-xs">
+                  <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-3 text-amber-900 flex items-start gap-2.5">
+                    <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <p className="text-[11.5px] leading-relaxed">
+                      <strong>¿El comunicado llegó como imagen escaneada?</strong> Conviértelo a Markdown con ChatGPT, Claude o Gemini y pégalo aquí. El agente evaluará pertinencia, resumirá su impacto académico y lo añadirá a la bandeja para tu revisión.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-stone-700 block mb-1">
+                      Asunto / Título del Comunicado *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={mdSubject}
+                      onChange={(e) => setMdSubject(e.target.value)}
+                      placeholder="Ej: Circular 004 de 2026 - Convocatoria de Modalidad Posgrado"
+                      className="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:ring-2 focus:ring-[#C2410C]/20 focus:border-[#C2410C]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-stone-700 block mb-1">
+                      Remitente / Entidad Emisora
+                    </label>
+                    <input
+                      type="text"
+                      value={mdSender}
+                      onChange={(e) => setMdSender(e.target.value)}
+                      placeholder="Ej: Consejo de Facultad <ingenieria@udistrital.edu.co>"
+                      className="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:ring-2 focus:ring-[#C2410C]/20 focus:border-[#C2410C]"
+                    />
+                  </div>
+
+                  {/* Optional Scan / Image Attachment */}
+                  <div className="space-y-1.5 p-3.5 bg-orange-50/40 border border-orange-200/60 rounded-xl">
+                    <div className="flex items-center justify-between">
+                      <label className="font-semibold text-stone-800 text-xs flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-[#C2410C]" />
+                        <span>Adjuntar Imagen o Escaneo del Comunicado (Opcional)</span>
+                      </label>
+                      {mdScanFile && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMdScanFile(null);
+                            if (mdScanPreviewUrl) URL.revokeObjectURL(mdScanPreviewUrl);
+                            setMdScanPreviewUrl(null);
+                          }}
+                          className="text-[11px] font-medium text-rose-600 hover:underline"
+                        >
+                          Quitar archivo
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="file"
+                      accept=".png,.jpg,.jpeg,.webp,.pdf"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setMdScanFile(f);
+                        if (f && (f.type.startsWith("image/") || f.name.match(/\.(png|jpe?g|webp)$/i))) {
+                          setMdScanPreviewUrl(URL.createObjectURL(f));
+                        } else {
+                          if (mdScanPreviewUrl) URL.revokeObjectURL(mdScanPreviewUrl);
+                          setMdScanPreviewUrl(null);
+                        }
+                      }}
+                      className="w-full text-xs text-stone-600 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#C2410C] file:text-white hover:file:bg-[#9A3412]"
+                    />
+                    <p className="text-[11px] text-stone-500">
+                      Sube la foto, escaneo o PDF (.png, .jpg, .webp, .pdf) del comunicado si fue emitido como imagen oficial.
+                    </p>
+                    {mdScanPreviewUrl && (
+                      <div className="mt-2 text-center p-2 bg-white rounded-lg border border-orange-200 shadow-xs">
+                        <img
+                          src={mdScanPreviewUrl}
+                          alt="Vista previa del escaneo adjunto"
+                          className="max-h-32 mx-auto rounded object-contain border border-stone-200"
+                        />
+                        <span className="text-[10px] text-stone-500 mt-1 block font-medium">
+                          Vista previa de la imagen escaneada adjunta
+                        </span>
+                      </div>
                     )}
                   </div>
-                  <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                    {selectedUploadFiles.map((file, idx) => {
-                      const ext = file.name.split('.').pop()?.toLowerCase();
-                      const sizeKb = (file.size / 1024).toFixed(1);
-                      return (
-                        <div
-                          key={idx}
-                          className="flex items-center justify-between p-2 rounded-xl bg-stone-50 border border-stone-200 text-xs"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                                ext === "eml"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : "bg-red-100 text-red-800"
-                              }`}
-                            >
-                              {ext?.toUpperCase()}
-                            </span>
-                            <span className="truncate font-medium text-stone-800">{file.name}</span>
-                            <span className="text-[10px] text-stone-400">({sizeKb} KB)</span>
-                          </div>
-                          {!isUploadingFiles && (
-                            <button
-                              onClick={() => removeUploadFile(idx)}
-                              className="p-1 text-stone-400 hover:text-red-600 transition"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
 
-              {/* Uploading progress indicator */}
-              {isUploadingFiles && (
-                <div className="p-6 text-center space-y-3 bg-stone-50 rounded-2xl border border-stone-200">
-                  <Loader2 className="w-8 h-8 text-[#C2410C] animate-spin mx-auto" />
-                  <p className="text-xs font-bold text-stone-900">
-                    Procesando comunicados con el Agente LLM...
-                  </p>
-                  <p className="text-[11px] text-stone-500">
-                    Extrayendo cabeceras, adjuntos, y evaluando pertinencia institucional...
-                  </p>
-                </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-semibold text-stone-700">
+                        Contenido en Formato Markdown *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMdContent(`# CIRCULAR INFORMATIVA N° 005 DE 2026\n\n**DE:** Consejo de Facultad de Ingeniería\n**PARA:** Estudiantes de Proyecto Curricular de Ingeniería de Sistemas\n**ASUNTO:** Cronograma y requisitos de Trabajo de Grado periodo 2026-1\n\n## 1. Calendario de Inscripción\nLos estudiantes interesados en postular su propuesta o anteproyecto de trabajo de grado deberán radicar la documentación antes del 30 de marzo de 2026.\n\n## 2. Requisitos Generales\n- Tener cursado y aprobado al menos el 70% de los créditos académicos.\n- Estar a paz y salvo académica y financieramente con la Universidad.`);
+                        }}
+                        className="text-[11px] text-[#C2410C] hover:underline flex items-center gap-1"
+                      >
+                        <FileCode className="w-3 h-3" />
+                        <span>Cargar plantilla de ejemplo</span>
+                      </button>
+                    </div>
+                    <textarea
+                      required
+                      rows={8}
+                      value={mdContent}
+                      onChange={(e) => setMdContent(e.target.value)}
+                      placeholder="# TÍTULO DEL COMUNICADO O RESOLUCIÓN&#10;&#10;Escribe o pega aquí el contenido en formato Markdown..."
+                      className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-[#C2410C]/20 focus:border-[#C2410C]"
+                    />
+                    <div className="flex items-center justify-between text-[11px] text-stone-400 mt-1">
+                      <span>Formato Markdown admitido (# Encabezados, **negrita**, listas, tablas)</span>
+                      <span>{mdContent.length} caracteres • {mdContent.trim() ? mdContent.trim().split(/\s+/).length : 0} palabras</span>
+                    </div>
+                  </div>
+
+                  {isCreatingMd && (
+                    <div className="p-4 text-center space-y-2 bg-stone-50 rounded-xl border border-stone-200">
+                      <Loader2 className="w-6 h-6 text-[#C2410C] animate-spin mx-auto" />
+                      <p className="text-xs font-bold text-stone-900">
+                        Evaluando pertinencia académica con el Agente LLM...
+                      </p>
+                    </div>
+                  )}
+                </form>
               )}
 
               {/* Upload Error */}
@@ -908,19 +1190,19 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                     {failureCount === 0 && (
                       <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2 font-medium">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>Se procesaron exitosamente {successCount} archivo(s) para triage.</span>
+                        <span>Se procesaron exitosamente {successCount} comunicado(s) para triage.</span>
                       </div>
                     )}
                     {failureCount > 0 && successCount > 0 && (
                       <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center gap-2 font-medium">
                         <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span>{successCount} archivo(s) procesados correctamente, {failureCount} con errores.</span>
+                        <span>{successCount} procesados correctamente, {failureCount} con errores.</span>
                       </div>
                     )}
                     {failureCount > 0 && successCount === 0 && (
                       <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 flex items-center gap-2 font-medium">
                         <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                        <span>No se pudo procesar ningún archivo ({failureCount} error(es)).</span>
+                        <span>No se pudo procesar ({failureCount} error(es)).</span>
                       </div>
                     )}
 
@@ -948,7 +1230,7 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
                                       : "bg-stone-200 text-stone-600"
                                   }`}
                                 >
-                                  {r.is_relevant ? `${r.relevance_score}% Relevante` : "Descartable"}
+                                  {r.is_relevant ? `${Number(r.relevance_score).toFixed(0)}% Relevante` : "Descartable"}
                                 </span>
                               )}
                               {!isOk && (
@@ -987,23 +1269,38 @@ export function EmailTriageModule({ onDataChanged }: EmailTriageModuleProps) {
               {!uploadResults ? (
                 <>
                   <button
+                    type="button"
                     onClick={handleCloseUploadModal}
-                    disabled={isUploadingFiles}
+                    disabled={isUploadingFiles || isCreatingMd}
                     className="px-3.5 py-1.5 text-xs font-medium text-stone-600 hover:text-stone-900 transition"
                   >
                     Cancelar
                   </button>
-                  <button
-                    onClick={handleStartBatchUpload}
-                    disabled={isUploadingFiles || selectedUploadFiles.length === 0}
-                    className="px-4 py-2 text-xs font-semibold text-white bg-[#C2410C] hover:bg-[#9A3412] disabled:opacity-50 rounded-xl transition flex items-center gap-1.5 shadow-xs"
-                  >
-                    {isUploadingFiles && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    <span>Iniciar Análisis & Carga ({selectedUploadFiles.length})</span>
-                  </button>
+                  {uploadTab === "files" ? (
+                    <button
+                      type="button"
+                      onClick={handleStartBatchUpload}
+                      disabled={isUploadingFiles || selectedUploadFiles.length === 0}
+                      className="px-4 py-2 text-xs font-semibold text-white bg-[#C2410C] hover:bg-[#9A3412] disabled:opacity-50 rounded-xl transition flex items-center gap-1.5 shadow-xs"
+                    >
+                      {isUploadingFiles && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>Iniciar Análisis & Carga ({selectedUploadFiles.length})</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleCreateMarkdownEmail()}
+                      disabled={isCreatingMd || !mdSubject.trim() || mdContent.trim().length < 10}
+                      className="px-4 py-2 text-xs font-semibold text-white bg-[#C2410C] hover:bg-[#9A3412] disabled:opacity-50 rounded-xl transition flex items-center gap-1.5 shadow-xs"
+                    >
+                      {isCreatingMd && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>Evaluar & Registrar con IA</span>
+                    </button>
+                  )}
                 </>
               ) : (
                 <button
+                  type="button"
                   onClick={handleCloseUploadModal}
                   className="px-4 py-2 text-xs font-semibold text-white bg-stone-900 hover:bg-stone-800 rounded-xl transition shadow-xs"
                 >

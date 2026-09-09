@@ -1,21 +1,23 @@
 import os
+import shutil
 import re
 import json
 import random
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.core.config import settings
 from app.db.session import get_db
-from app.db.models import EmailNotice, DocumentItem, SystemSetting, StudentQueryLog
+from app.db.models import EmailNotice, DocumentItem, SystemSetting, StudentQueryLog, SessionFeedback
 from app.api.deps import get_current_admin
 from app.services.triage_service import triage_service
 from app.services.vector_store import vector_store
 from app.services.eml_parser import parse_eml_bytes
 from app.services.document_processor import document_processor
+from app.services.rag_service import detect_other_career
 import logging
 from app.services.llm_adapter import llm_adapter
 
@@ -34,6 +36,7 @@ class UpdateSettingsPayload(BaseModel):
 
 class UpdateEmailPayload(BaseModel):
     subject: Optional[str] = None
+    sender: Optional[str] = None
     triage_summary: Optional[str] = None
     target_program: Optional[str] = None
 
@@ -96,10 +99,19 @@ def update_email_metadata(
 
     if payload.subject is not None:
         email.subject = payload.subject
+    if payload.sender is not None:
+        email.sender = payload.sender.strip() or "comunicados@udistrital.edu.co"
     if payload.triage_summary is not None:
         email.triage_summary = payload.triage_summary
     if payload.target_program is not None:
         email.target_program = payload.target_program
+
+    # If this notice has derived DocumentItems, sync the resolution_number and title
+    for doc in email.documents:
+        if payload.sender is not None:
+            doc.resolution_number = f"Comunicado Correo UD ({email.sender})"
+        if payload.subject is not None:
+            doc.title = f"Comunicado: {email.subject}"
 
     db.commit()
     return {"success": True, "message": "Comunicado actualizado correctamente."}
@@ -281,6 +293,8 @@ def get_system_stats(
     rejected_emails = db.query(EmailNotice).filter(EmailNotice.status == "REJECTED").count()
     total_docs = db.query(DocumentItem).count()
     total_chunks = vector_store.get_total_chunks()
+    total_feedbacks = db.query(SessionFeedback).count()
+    pending_feedbacks = db.query(SessionFeedback).filter(SessionFeedback.status != "REVIEWED").count()
 
     mode_setting = db.query(SystemSetting).filter(SystemSetting.key == "autonomous_mode").first()
     is_autonomous = mode_setting.value.lower() == "true" if mode_setting else False
@@ -292,6 +306,8 @@ def get_system_stats(
         "rejected_emails": rejected_emails,
         "total_documents": total_docs,
         "total_vector_chunks": total_chunks,
+        "total_feedbacks": total_feedbacks,
+        "pending_feedbacks": pending_feedbacks,
         "autonomous_mode": is_autonomous
     }
 
@@ -319,6 +335,9 @@ def get_crm_analytics(
         start_of_prev_month = datetime(now.year, now.month - 1, 1)
 
     total_all_queries = db.query(StudentQueryLog).count()
+    sistemas_filter = StudentQueryLog.topic_category != "Otra Carrera / Facultad"
+    total_sistemas_queries = db.query(StudentQueryLog).filter(sistemas_filter).count()
+
     current_month_queries = db.query(StudentQueryLog).filter(StudentQueryLog.timestamp >= start_of_current_month).count()
     prev_month_queries = db.query(StudentQueryLog).filter(
         StudentQueryLog.timestamp >= start_of_prev_month,
@@ -338,13 +357,26 @@ def get_crm_analytics(
         func.count(StudentQueryLog.id)
     ).group_by(StudentQueryLog.topic_category).order_by(func.count(StudentQueryLog.id).desc()).all()
 
-    top_topic = topic_counts[0][0] if topic_counts else "Sin consultas registradas"
+    # Top topic for Sistemas
+    sistemas_topic_counts = db.query(
+        StudentQueryLog.topic_category,
+        func.count(StudentQueryLog.id)
+    ).filter(sistemas_filter).group_by(StudentQueryLog.topic_category).order_by(func.count(StudentQueryLog.id).desc()).all()
+    top_topic = sistemas_topic_counts[0][0] if sistemas_topic_counts else "Sin consultas registradas"
 
-    total_with_citations = db.query(StudentQueryLog).filter(StudentQueryLog.citations_count > 0).count()
-    rag_coverage_pct = round((total_with_citations / total_all_queries * 100) if total_all_queries > 0 else 0.0, 1)
+    # RAG coverage and gaps calculated strictly on Sistemas queries
+    total_with_citations = db.query(StudentQueryLog).filter(
+        sistemas_filter,
+        StudentQueryLog.citations_count > 0,
+        StudentQueryLog.has_knowledge_gap == False
+    ).count()
+    rag_coverage_pct = round((total_with_citations / total_sistemas_queries * 100) if total_sistemas_queries > 0 else 0.0, 1)
 
-    total_gaps = db.query(StudentQueryLog).filter(StudentQueryLog.has_knowledge_gap == True).count()
-    gaps_rate_pct = round((total_gaps / total_all_queries * 100) if total_all_queries > 0 else 0.0, 1)
+    total_gaps = db.query(StudentQueryLog).filter(
+        sistemas_filter,
+        StudentQueryLog.has_knowledge_gap == True
+    ).count()
+    gaps_rate_pct = round((total_gaps / total_sistemas_queries * 100) if total_sistemas_queries > 0 else 0.0, 1)
 
     total_docs = db.query(DocumentItem).count()
     total_chunks = vector_store.get_total_chunks()
@@ -371,13 +403,22 @@ def get_crm_analytics(
             StudentQueryLog.timestamp < m_end
         ).count()
 
+        m_sistemas_count = db.query(StudentQueryLog).filter(
+            sistemas_filter,
+            StudentQueryLog.timestamp >= m_start,
+            StudentQueryLog.timestamp < m_end
+        ).count()
+
         m_citations = db.query(StudentQueryLog).filter(
+            sistemas_filter,
             StudentQueryLog.timestamp >= m_start,
             StudentQueryLog.timestamp < m_end,
-            StudentQueryLog.citations_count > 0
+            StudentQueryLog.citations_count > 0,
+            StudentQueryLog.has_knowledge_gap == False
         ).count()
 
         m_gaps = db.query(StudentQueryLog).filter(
+            sistemas_filter,
             StudentQueryLog.timestamp >= m_start,
             StudentQueryLog.timestamp < m_end,
             StudentQueryLog.has_knowledge_gap == True
@@ -391,9 +432,10 @@ def get_crm_analytics(
         monthly_series.append({
             "label": f"{month_names_es[m_month - 1]}",
             "consultas": m_count,
+            "consultas_sistemas": m_sistemas_count,
             "documentos": new_docs,
-            "cobertura": round((m_citations / m_count * 100) if m_count > 0 else 0.0, 1),
-            "brechas": round((m_gaps / m_count * 100) if m_count > 0 else 0.0, 1),
+            "cobertura": round((m_citations / m_sistemas_count * 100) if m_sistemas_count > 0 else 0.0, 1),
+            "brechas": round((m_gaps / m_sistemas_count * 100) if m_sistemas_count > 0 else 0.0, 1),
             "tiempo": 1.2 if m_count > 0 else 0.0,
         })
 
@@ -424,8 +466,9 @@ def get_crm_analytics(
             "cited_source": cited_text
         })
 
-    # 5. Knowledge Gaps
+    # 5. Knowledge Gaps (Strictly normative gaps in Sistemas)
     gaps_raw = db.query(StudentQueryLog).filter(
+        sistemas_filter,
         StudentQueryLog.has_knowledge_gap == True
     ).order_by(StudentQueryLog.timestamp.desc()).limit(10).all()
 
@@ -440,8 +483,8 @@ def get_crm_analytics(
             "status": "SIN_RESOLUCION_ASOCIADA"
         })
 
-    # 6. Real System Health
-    overall_health = 100.0 if total_all_queries == 0 else max(10.0, min(100.0, rag_coverage_pct))
+    # 6. Real System Health (Sistemas Pilot V1)
+    overall_health = 100.0 if total_sistemas_queries == 0 else max(10.0, min(100.0, rag_coverage_pct))
     system_health = {
         "overall_score": round(overall_health, 1),
         "success_rate": rag_coverage_pct,
@@ -452,6 +495,42 @@ def get_crm_analytics(
         "total_chunks": total_chunks,
         "total_documents": total_docs,
         "status": "OPERACIONAL"
+    }
+
+    # 7. Interest Tracking from Other Careers / Faculties (Escalabilidad)
+    other_career_logs = db.query(StudentQueryLog).filter(
+        StudentQueryLog.topic_category == "Otra Carrera / Facultad"
+    ).order_by(StudentQueryLog.timestamp.desc()).all()
+
+    total_other_queries = len(other_career_logs)
+    career_tally = {}
+    recent_other_queries = []
+
+    for l in other_career_logs:
+        detected = detect_other_career(l.query_text) or "Otra Carrera / Facultad"
+        career_tally[detected] = career_tally.get(detected, 0) + 1
+        if len(recent_other_queries) < 15:
+            recent_other_queries.append({
+                "id": l.id,
+                "query": l.query_text,
+                "career": detected,
+                "date": l.timestamp.strftime("%d/%m/%Y %H:%M")
+            })
+
+    careers_ranking = [
+        {
+            "career": k,
+            "count": v,
+            "percentage": round((v / total_other_queries * 100) if total_other_queries > 0 else 0.0, 1)
+        }
+        for k, v in sorted(career_tally.items(), key=lambda item: item[1], reverse=True)
+    ]
+
+    other_faculty_interest = {
+        "total_queries": total_other_queries,
+        "percentage_of_all_traffic": round((total_other_queries / total_all_queries * 100) if total_all_queries > 0 else 0.0, 1),
+        "careers_ranking": careers_ranking,
+        "recent_queries": recent_other_queries
     }
 
     return {
@@ -466,13 +545,16 @@ def get_crm_analytics(
             "avg_latency": 1.2 if total_all_queries > 0 else 0.0,
             "total_documents": total_docs,
             "total_vector_chunks": total_chunks,
-            "total_all_time_queries": total_all_queries
+            "total_all_time_queries": total_all_queries,
+            "sistemas_queries_count": total_sistemas_queries,
+            "other_faculty_queries_count": total_other_queries
         },
         "monthly_series": monthly_series,
         "topic_distribution": all_topics_data,
         "top_questions": top_questions,
         "knowledge_gaps": knowledge_gaps,
-        "system_health": system_health
+        "system_health": system_health,
+        "other_faculty_interest": other_faculty_interest
     }
 
 @router.post("/emails/upload-batch")
@@ -531,7 +613,8 @@ async def upload_batch_emails_and_notices(
                 if not pdf_text or len(pdf_text.strip()) < 20:
                     pdf_text = f"Comunicado oficial adjunto en formato PDF: {filename}."
 
-                clean_title = os.path.splitext(clean_name)[0].replace("_", " ").title()
+                official_meta = document_processor.extract_official_metadata(pdf_text)
+                clean_title = official_meta.get("title") or os.path.splitext(clean_name)[0].replace("_", " ").title()
 
                 email_record = triage_service.process_incoming_email(
                     db=db,
@@ -553,11 +636,43 @@ async def upload_batch_emails_and_notices(
                     "relevance_score": email_record.relevance_score,
                     "triage_summary": email_record.triage_summary
                 })
+            elif ext in [".md", ".markdown", ".txt"]:
+                clean_name = re.sub(r'[^\w\.-]', '_', os.path.basename(filename))
+                file_path = os.path.join(upload_dir, clean_name)
+
+                content = await upload_file.read()
+                raw_text = content.decode("utf-8", errors="replace")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(raw_text)
+
+                official_meta = document_processor.extract_official_metadata(raw_text)
+                clean_title = official_meta.get("title") or os.path.splitext(clean_name)[0].replace("_", " ").title()
+
+                email_record = triage_service.process_incoming_email(
+                    db=db,
+                    sender="comunicados@udistrital.edu.co",
+                    subject=f"Acuerdo/Comunicado: {clean_title}",
+                    body=raw_text,
+                    attachments=[clean_name],
+                    urls=[]
+                )
+                results.append({
+                    "filename": filename,
+                    "type": "markdown",
+                    "success": True,
+                    "email_id": email_record.id,
+                    "subject": email_record.subject,
+                    "sender": email_record.sender,
+                    "status": email_record.status,
+                    "is_relevant": email_record.is_relevant,
+                    "relevance_score": email_record.relevance_score,
+                    "triage_summary": email_record.triage_summary
+                })
             else:
                 results.append({
                     "filename": filename,
                     "success": False,
-                    "error": f"Formato '{ext}' no soportado. Debe ser .eml o .pdf"
+                    "error": f"Formato '{ext}' no soportado. Debe ser .eml, .pdf o .md"
                 })
         except Exception as file_err:
             logger.error(f"[UploadBatch] Error processing {filename}: {file_err}", exc_info=True)
@@ -571,4 +686,81 @@ async def upload_batch_emails_and_notices(
         "success": True,
         "processed_count": len(results),
         "results": results
+    }
+
+class CreateMarkdownEmailPayload(BaseModel):
+    subject: str
+    markdown_content: str
+    sender: Optional[str] = "comunicados@udistrital.edu.co"
+
+@router.post("/emails/create-markdown")
+async def create_markdown_email_notice(
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """
+    Directly creates an email notice from Markdown text and executes LLM triage,
+    with an optional attached scan/image of the original document.
+    """
+    content_type = request.headers.get("content-type", "")
+    scan_file = None
+    if "multipart/form-data" in content_type:
+        form_data = await request.form()
+        subject = form_data.get("subject", "")
+        markdown_content = form_data.get("markdown_content", "")
+        sender = form_data.get("sender", "comunicados@udistrital.edu.co")
+        scan_file = form_data.get("scan_file")
+    else:
+        json_data = await request.json()
+        subject = json_data.get("subject", "")
+        markdown_content = json_data.get("markdown_content", "")
+        sender = json_data.get("sender", "comunicados@udistrital.edu.co")
+
+    if not markdown_content or len(markdown_content.strip()) < 10:
+        raise HTTPException(status_code=400, detail="El contenido en Markdown no puede estar vacío.")
+
+    raw_text = markdown_content.strip()
+    official_meta = document_processor.extract_official_metadata(raw_text)
+    clean_title = subject.strip() or official_meta.get("title") or "Acuerdo / Comunicado Oficial"
+
+    # Save to uploads folder
+    safe_title = re.sub(r'[^\w\.-]', '_', clean_title.lower())[:50]
+    filename = f"{safe_title}_{int(datetime.utcnow().timestamp())}.md"
+    upload_dir = os.path.join(settings.DATA_DIR, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, filename)
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(raw_text)
+
+    attachments = [filename]
+    if scan_file and hasattr(scan_file, "filename") and scan_file.filename:
+        scan_ext = os.path.splitext(scan_file.filename)[1].lower()
+        if scan_ext in [".png", ".jpg", ".jpeg", ".webp", ".pdf"]:
+            safe_scan = re.sub(r'[^\w\.-]', '_', os.path.splitext(scan_file.filename)[0].lower())[:40]
+            scan_filename = f"scan_{safe_scan}_{int(datetime.utcnow().timestamp())}{scan_ext}"
+            scan_path = os.path.join(upload_dir, scan_filename)
+            with open(scan_path, "wb") as b:
+                shutil.copyfileobj(scan_file.file, b)
+            attachments.append(scan_filename)
+
+    email_record = triage_service.process_incoming_email(
+        db=db,
+        sender=sender or "comunicados@udistrital.edu.co",
+        subject=clean_title,
+        body=raw_text,
+        attachments=attachments,
+        urls=[]
+    )
+
+    return {
+        "success": True,
+        "email_id": email_record.id,
+        "subject": email_record.subject,
+        "status": email_record.status,
+        "is_relevant": email_record.is_relevant,
+        "relevance_score": email_record.relevance_score,
+        "triage_summary": email_record.triage_summary,
+        "target_program": email_record.target_program
     }

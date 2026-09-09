@@ -9,10 +9,16 @@ import {
   GraduationCap,
   ArrowUpRight,
   HelpCircle,
+  MessageSquareHeart,
+  Send,
+  CheckCircle2,
+  X,
+  Star,
+  Mail,
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { streamChat } from "@/lib/api";
+import { streamChat, getDocumentPdfUrl, sendSessionFeedback } from "@/lib/api";
 import {
   ChatMessage,
   getStoredChatHistory,
@@ -136,6 +142,30 @@ export const ChatInterface: React.FC = () => {
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Session & Feedback states
+  const [sessionId, setSessionId] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const storedId = sessionStorage.getItem("can_i_graduate_session_id");
+      if (storedId) return storedId;
+      const newId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      sessionStorage.setItem("can_i_graduate_session_id", newId);
+      return newId;
+    }
+    return `session_${Date.now()}`;
+  });
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<"sugerencia" | "informacion_imprecisa" | "error_tecnico" | "general">("general");
+  const [feedbackRating, setFeedbackRating] = useState<number>(0);
+  const [feedbackComments, setFeedbackComments] = useState("");
+  const [feedbackUserEmail, setFeedbackUserEmail] = useState("");
+  const [feedbackIncludeTranscript, setFeedbackIncludeTranscript] = useState(true);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackSuccess, setFeedbackSuccess] = useState(false);
+  const [feedbackEmailSent, setFeedbackEmailSent] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [feedbackMailtoUrl, setFeedbackMailtoUrl] = useState<string | null>(null);
+  const [feedbackGmailUrl, setFeedbackGmailUrl] = useState<string | null>(null);
+
   useEffect(() => {
     const stored = getStoredChatHistory();
     if (stored.length > 0) {
@@ -223,11 +253,25 @@ export const ChatInterface: React.FC = () => {
         scheduleUpdate();
       },
       (citations) => {
-        currentCitations = citations;
-        const updatedSources = citations.map((c) => ({
-          name: `${c.resolution}${c.article ? ` (${c.article})` : ""}`,
-          url: "#",
-        }));
+        const seen = new Set<string>();
+        const dedupedCitations: any[] = [];
+        for (const cit of citations) {
+          const key = cit.document_id ? `id_${cit.document_id}` : (cit.title || cit.resolution || "").trim().toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            dedupedCitations.push(cit);
+          }
+        }
+        currentCitations = dedupedCitations;
+        const updatedSources = dedupedCitations.map((c) => {
+          const rawUrl = c.pdf_url
+            ? (c.pdf_url.startsWith("http") ? c.pdf_url : `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}${c.pdf_url}`)
+            : (c.document_id ? getDocumentPdfUrl(c.document_id) : undefined);
+          return {
+            name: `${c.resolution || c.title}${c.article ? ` (${c.article})` : ""}`,
+            url: rawUrl,
+          };
+        });
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id !== assistantMsgId) return msg;
@@ -291,6 +335,50 @@ export const ChatInterface: React.FC = () => {
     if (confirm("¿Deseas reiniciar la conversación?")) {
       clearStoredChatHistory();
       setMessages([]);
+      if (typeof window !== "undefined") {
+        const newId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        sessionStorage.setItem("can_i_graduate_session_id", newId);
+        setSessionId(newId);
+      }
+    }
+  };
+
+  const handleSubmitFeedback = async () => {
+    if (!feedbackComments.trim()) return;
+    setFeedbackSubmitting(true);
+    setFeedbackError(null);
+    try {
+      const transcriptMessages = feedbackIncludeTranscript
+        ? messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+            timestamp: m.timestamp,
+            citations: m.citations?.map((c) => ({
+              title: c.title,
+              resolution: c.resolution,
+              article: c.article,
+            })),
+          }))
+        : undefined;
+
+      const res = await sendSessionFeedback({
+        session_id: sessionId,
+        user_email: feedbackUserEmail.trim() || undefined,
+        feedback_type: feedbackType,
+        rating: feedbackRating || undefined,
+        comments: feedbackComments.trim(),
+        include_transcript: feedbackIncludeTranscript,
+        messages: transcriptMessages,
+      });
+
+      setFeedbackEmailSent(res.email_sent || false);
+      setFeedbackMailtoUrl(res.mailto_url || null);
+      setFeedbackGmailUrl(res.gmail_compose_url || null);
+      setFeedbackSuccess(true);
+    } catch (err: any) {
+      setFeedbackError(err.message || "Error al registrar retroalimentación");
+    } finally {
+      setFeedbackSubmitting(false);
     }
   };
 
@@ -345,7 +433,21 @@ export const ChatInterface: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {messages.length > 0 && (
+            <button
+              onClick={() => {
+                setFeedbackSuccess(false);
+                setFeedbackError(null);
+                setIsFeedbackModalOpen(true);
+              }}
+              title="Enviar feedback sobre esta sesión a canigraduateud@gmail.com"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-full border border-amber-500/30 transition-all duration-200 active:scale-95 backdrop-blur-md"
+            >
+              <MessageSquareHeart className="w-3.5 h-3.5" />
+              <span>Feedback</span>
+            </button>
+          )}
           {messages.length > 0 && (
             <button
               onClick={handleClear}
@@ -515,6 +617,27 @@ export const ChatInterface: React.FC = () => {
                               </div>
                             </div>
                           )}
+
+                          {/* Feedback Action Link for this session/message */}
+                          {msg.content && !isLoading && (
+                            <div className="mt-3 pt-2.5 border-t border-white/[0.06] flex items-center justify-between text-[11px] text-neutral-400">
+                              <button
+                                onClick={() => {
+                                  setFeedbackSuccess(false);
+                                  setFeedbackError(null);
+                                  setIsFeedbackModalOpen(true);
+                                }}
+                                className="inline-flex items-center gap-1.5 text-neutral-400 hover:text-amber-300 transition-colors py-0.5"
+                                title="Enviar retroalimentación sobre esta respuesta a canigraduateud@gmail.com"
+                              >
+                                <MessageSquareHeart className="w-3.5 h-3.5 text-amber-400/80" />
+                                <span>Enviar feedback de esta sesión</span>
+                              </button>
+                              <span className="text-[10px] text-neutral-500 font-mono hidden sm:inline">
+                                canigraduateud@gmail.com
+                              </span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -561,6 +684,251 @@ export const ChatInterface: React.FC = () => {
           </div>
         </footer>
       )}
+
+      {/* Feedback Modal */}
+      <AnimatePresence>
+        {isFeedbackModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ duration: 0.2 }}
+              className="w-full max-w-lg bg-neutral-900 border border-white/15 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 text-neutral-200 relative overflow-hidden"
+            >
+              <button
+                onClick={() => setIsFeedbackModalOpen(false)}
+                className="absolute top-5 right-5 p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              {feedbackSuccess ? (
+                <div className="text-center py-6 space-y-4">
+                  <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">¡Gracias por tu retroalimentación!</h3>
+                    <p className="text-xs sm:text-sm text-neutral-400 mt-1.5 max-w-sm mx-auto leading-relaxed">
+                      {feedbackEmailSent ? (
+                        <>
+                          Tu reporte y la conversación han sido enviados automáticamente al correo{" "}
+                          <span className="text-amber-300 font-mono font-medium">canigraduateud@gmail.com</span>.
+                        </>
+                      ) : (
+                        <>
+                          Tu reporte y transcripción quedaron guardados en el sistema para{" "}
+                          <span className="text-amber-300 font-mono font-medium">canigraduateud@gmail.com</span>.
+                        </>
+                      )}
+                    </p>
+                  </div>
+
+                  {!feedbackEmailSent && (feedbackGmailUrl || feedbackMailtoUrl) && (
+                    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-left space-y-3">
+                      <div className="flex items-center gap-2 text-amber-300 text-xs font-semibold">
+                        <Mail className="w-4 h-4" />
+                        <span>Completar envío inmediato al correo:</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-300 leading-relaxed">
+                        Para enviar este reporte directamente a la bandeja de <strong>canigraduateud@gmail.com</strong> desde tu cuenta, pulsa abajo para abrir la plantilla con la conversación ya redactada:
+                      </p>
+                      <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                        {feedbackGmailUrl && (
+                          <a
+                            href={feedbackGmailUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#C2410C] hover:bg-[#EA580C] text-white font-semibold text-xs shadow-md transition active:scale-95 text-center"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            <span>Enviar con Gmail Web</span>
+                          </a>
+                        )}
+                        {feedbackMailtoUrl && (
+                          <a
+                            href={feedbackMailtoUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs border border-white/15 transition active:scale-95 text-center"
+                          >
+                            <span>App de Correo</span>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="pt-2">
+                    <button
+                      onClick={() => setIsFeedbackModalOpen(false)}
+                      className="px-5 py-2 text-xs font-semibold rounded-xl bg-white/10 hover:bg-white/20 text-white transition"
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <div className="flex items-center gap-2 text-amber-400 text-xs font-semibold uppercase tracking-wider mb-1">
+                      <MessageSquareHeart className="w-4 h-4" />
+                      <span>Feedback de la Sesión</span>
+                    </div>
+                    <h3 className="text-lg font-bold text-white tracking-tight">
+                      Envíanos tus comentarios
+                    </h3>
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      Tus observaciones nos permiten auditar respuestas y mejorar la base normativa.
+                      Destino: <span className="text-amber-300 font-mono font-medium">canigraduateud@gmail.com</span>
+                    </p>
+                  </div>
+
+                  {/* Rating Stars */}
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                      ¿Cómo calificarías las respuestas de esta sesión?
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setFeedbackRating(star)}
+                          className="p-1 text-neutral-500 hover:text-amber-400 transition"
+                        >
+                          <Star
+                            className={`w-5 h-5 ${
+                              feedbackRating >= star
+                                ? "text-amber-400 fill-amber-400"
+                                : "text-neutral-600"
+                            }`}
+                          />
+                        </button>
+                      ))}
+                      <span className="text-xs text-neutral-400 ml-2 font-medium">
+                        {feedbackRating === 5 && "Excelente"}
+                        {feedbackRating === 4 && "Buena"}
+                        {feedbackRating === 3 && "Aceptable"}
+                        {feedbackRating === 2 && "Regular"}
+                        {feedbackRating === 1 && "Deficiente"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Category Pills */}
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                      Tipo de observación:
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                      {[
+                        { id: "sugerencia", label: "💡 Sugerencia" },
+                        { id: "informacion_imprecisa", label: "⚠️ Imprecisión" },
+                        { id: "error_tecnico", label: "🐞 Error" },
+                        { id: "general", label: "💬 General" },
+                      ].map((cat) => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setFeedbackType(cat.id as any)}
+                          className={`text-xs px-2.5 py-1.5 rounded-xl border transition text-center ${
+                            feedbackType === cat.id
+                              ? "bg-amber-500/20 border-amber-400/80 text-amber-200 font-semibold"
+                              : "bg-white/[0.04] border-white/10 text-neutral-400 hover:text-white"
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Comments */}
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-300 mb-1.5">
+                      Comentarios u observaciones <span className="text-amber-400">*</span>
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={feedbackComments}
+                      onChange={(e) => setFeedbackComments(e.target.value)}
+                      placeholder="¿Qué respuesta faltó, qué normativa no se citó o qué sugerencia tienes?"
+                      className="w-full text-xs sm:text-sm bg-neutral-950/70 border border-white/10 rounded-2xl p-3 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-400/60 resize-none"
+                    />
+                  </div>
+
+                  {/* Contact Email (Optional) */}
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-300 mb-1">
+                      Correo de contacto (opcional):
+                    </label>
+                    <input
+                      type="email"
+                      value={feedbackUserEmail}
+                      onChange={(e) => setFeedbackUserEmail(e.target.value)}
+                      placeholder="tu.correo@udistrital.edu.co"
+                      className="w-full text-xs bg-neutral-950/70 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-400/60"
+                    />
+                  </div>
+
+                  {/* Checkbox: Attach Session Transcript */}
+                  <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-3 flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      id="attachTranscript"
+                      checked={feedbackIncludeTranscript}
+                      onChange={(e) => setFeedbackIncludeTranscript(e.target.checked)}
+                      className="mt-0.5 rounded border-white/20 bg-neutral-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-neutral-900 cursor-pointer"
+                    />
+                    <label htmlFor="attachTranscript" className="text-xs cursor-pointer select-none">
+                      <span className="font-semibold text-white block">
+                        Adjuntar conversación de esta sesión ({messages.length} mensaje{messages.length === 1 ? "" : "s"})
+                      </span>
+                      <span className="text-neutral-400 block mt-0.5 text-[11px] leading-relaxed">
+                        Permite al equipo analizar las preguntas y respuestas de esta sesión en concreto para auditar la precisión.
+                      </span>
+                    </label>
+                  </div>
+
+                  {feedbackError && (
+                    <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-xl">
+                      {feedbackError}
+                    </p>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setIsFeedbackModalOpen(false)}
+                      className="px-4 py-2 text-xs font-medium text-neutral-400 hover:text-white transition"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={feedbackSubmitting || !feedbackComments.trim()}
+                      onClick={handleSubmitFeedback}
+                      className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed active:scale-95"
+                    >
+                      {feedbackSubmitting ? (
+                        <span>Enviando...</span>
+                      ) : (
+                        <>
+                          <Send className="w-3.5 h-3.5" />
+                          <span>Enviar a canigraduateud@gmail.com</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

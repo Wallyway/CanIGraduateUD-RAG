@@ -21,11 +21,12 @@ import {
   ExternalLink,
   HelpCircle,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  MessageSquareHeart
 } from "lucide-react";
 import { clearAdminToken } from "@/lib/storage";
 
-export type AdminTab = "analytics" | "triage" | "knowledge" | "settings";
+export type AdminTab = "analytics" | "triage" | "knowledge" | "settings" | "feedback";
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -34,6 +35,8 @@ interface AdminSidebarProps {
     pending_emails?: number;
     total_documents?: number;
     total_vector_chunks?: number;
+    total_feedbacks?: number;
+    pending_feedbacks?: number;
     autonomous_mode?: boolean;
   } | null;
   className?: string;
@@ -126,6 +129,18 @@ export function AdminSidebar({
       badgeColor: stats?.autonomous_mode
         ? "bg-emerald-100 text-emerald-800 border-emerald-200"
         : "bg-stone-100 text-stone-600 border-stone-200"
+    },
+    {
+      id: "feedback",
+      label: "Feedbacks de Sesión",
+      icon: MessageSquareHeart,
+      badge: stats?.pending_feedbacks && stats.pending_feedbacks > 0
+        ? stats.pending_feedbacks
+        : (stats?.total_feedbacks ? `${stats.total_feedbacks}` : null),
+      badgeColor: stats?.pending_feedbacks && stats.pending_feedbacks > 0
+        ? "bg-rose-100 text-rose-800 border-rose-200 font-semibold"
+        : "bg-stone-100 text-stone-600 border-stone-200",
+      hasAlert: Boolean(stats?.pending_feedbacks && stats.pending_feedbacks > 0)
     }
   ];
 

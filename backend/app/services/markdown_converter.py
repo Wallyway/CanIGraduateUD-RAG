@@ -30,7 +30,10 @@ class MarkdownConverter:
 
         for idx, page in enumerate(reader.pages):
             try:
-                text = page.extract_text() or ""
+                try:
+                    text = page.extract_text(extraction_mode="layout") or ""
+                except Exception:
+                    text = page.extract_text() or ""
                 cleaned_dup = document_processor.clean_shadow_duplicates(text)
                 cleaned = self._clean_page_text(cleaned_dup, idx + 1)
                 if cleaned:
@@ -52,15 +55,42 @@ class MarkdownConverter:
     def _clean_page_text(self, text: str, page_num: int) -> str:
         lines = text.split("\n")
         cleaned_lines = []
-        for line in lines:
+        is_subsequent_page = page_num > 1
+        in_running_header = is_subsequent_page
+
+        for line_idx, line in enumerate(lines):
             trimmed = line.strip()
             if not trimmed:
                 continue
+
+            # Drop page numbering footers
             if re.match(r"^P[aá]gina\s+\d+(\s+de\s+\d+)?$", trimmed, re.IGNORECASE):
                 continue
             if re.match(r"^\d+\s*$", trimmed):
                 continue
-            cleaned_lines.append(trimmed)
+
+            # Drop running institutional headers at top of subsequent pages
+            if in_running_header and line_idx < 15:
+                norm_upper = trimmed.upper()
+                is_hdr_line = len(trimmed) < 80 and (
+                    any(hdr in norm_upper for hdr in [
+                        "UNIVERSIDAD DISTRITAL",
+                        "FRANCISCO JOSÉ DE CALDAS",
+                        "CONSEJO ACADÉMICO",
+                        "CONSEJO SUPERIOR",
+                        "CONSEJO DE FACULTAD",
+                        "VICERRECTORÍA",
+                        "SECRETARÍA GENERAL",
+                        "SECRETARIA GENERAL",
+                        "CONSEJO ACADEMICO",
+                    ]) or bool(re.match(r"^(ACUERDO|RESOLUCI[ÓO]N)\s+N[º°\.]*\s*\d+", norm_upper))
+                )
+                if is_hdr_line:
+                    continue
+                else:
+                    in_running_header = False
+
+            cleaned_lines.append(re.sub(r'[ \t]{2,}', ' ', trimmed))
 
         return "\n".join(cleaned_lines)
 

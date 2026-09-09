@@ -6,6 +6,42 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+def _is_repetition_loop(accumulated_text: str, min_phrase_len: int = 35, max_occurrences: int = 3) -> bool:
+    """
+    Detects if the LLM output has entered a degenerative repetition trap.
+    Checks for:
+    1. Sentences of >= 25 characters appearing >= 3 times.
+    2. The recent tail (>= 35 characters) appearing >= 3 times in the entire text.
+    3. Cyclical repeated suffixes (consecutive identical segments of length >= 35).
+    """
+    if len(accumulated_text) < 140:
+        return False
+
+    import re
+    sentences = [s.strip() for s in re.split(r"[\n\.\?!]", accumulated_text) if len(s.strip()) >= 25]
+    if len(sentences) >= 3:
+        counts = {}
+        for s in sentences:
+            norm = " ".join(s.split()).lower()
+            counts[norm] = counts.get(norm, 0) + 1
+            if counts[norm] >= max_occurrences:
+                return True
+
+    tail = accumulated_text[-min_phrase_len:].strip()
+    if len(tail) >= min_phrase_len:
+        if accumulated_text.count(tail) >= max_occurrences:
+            return True
+
+    recent_window = accumulated_text[-400:]
+    n = len(recent_window)
+    for k in range(35, min(160, n // 2)):
+        suffix = recent_window[-k:]
+        prev_k = recent_window[-2 * k : -k]
+        if suffix == prev_k:
+            return True
+
+    return False
+
 class LLMAdapter:
     def __init__(self):
         self.provider = settings.LLM_PROVIDER.lower()
@@ -36,8 +72,8 @@ class LLMAdapter:
             self.model_name = settings.OPENAI_MODEL
             self.client = OpenAI(api_key=api_key)
 
-    def stream_chat(self, messages: List[Dict[str, str]], temperature: float = 0.2) -> Generator[str, None, None]:
-        """Streams completion chunks from the selected LLM provider."""
+    def stream_chat(self, messages: List[Dict[str, str]], temperature: float = 0.25) -> Generator[str, None, None]:
+        """Streams completion chunks from the selected LLM provider with anti-loop guardrails."""
         # Check if dummy key is present
         api_key = settings.OPENROUTER_API_KEY if self.provider == "openrouter" else settings.OPENAI_API_KEY
         if not api_key or "your-" in api_key or "dummy" in api_key:
@@ -51,17 +87,33 @@ class LLMAdapter:
             yield "¿Deseas información detallada sobre alguna modalidad específica como la pasantía o materias de posgrado?"
             return
 
+        extra_kwargs: Dict[str, Any] = {
+            "frequency_penalty": 0.3,
+            "presence_penalty": 0.15,
+        }
+        if "llama" in self.model_name.lower():
+            extra_kwargs["stop"] = ["<|eot_id|>", "<|eom_id|>", "<|end_of_text|>", "</s>"]
+
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=2048,
-                stream=True
+                stream=True,
+                **extra_kwargs
             )
+            accumulated_response = ""
             for chunk in response:
                 if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                    delta = chunk.choices[0].delta.content
+                    accumulated_response += delta
+                    if _is_repetition_loop(accumulated_response):
+                        logger.warning(
+                            f"[LLMAdapter] Repetition loop trap detected for model '{self.model_name}'. Safely breaking stream."
+                        )
+                        break
+                    yield delta
         except Exception as e:
             logger.error(f"Error calling LLM stream: {e}")
             yield f"\n\n[Error de comunicación con el modelo LLM ({self.provider}): {str(e)}. Por favor verifica tu API Key en el archivo .env]"

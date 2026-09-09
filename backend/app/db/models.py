@@ -62,6 +62,7 @@ class DocumentItem(Base):
     supersedes_id = Column(Integer, ForeignKey("document_items.id"), nullable=True)
     superseded_by_title = Column(String(255), nullable=True)
     markdown_content = Column(Text, nullable=True)
+    scan_image_path = Column(String(500), nullable=True)
     original_pdf_url = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -78,5 +79,20 @@ class StudentQueryLog(Base):
     has_knowledge_gap = Column(Boolean, default=False, index=True)
     device_type = Column(String(50), default="desktop")
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+class SessionFeedback(Base):
+    __tablename__ = "session_feedbacks"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    session_id = Column(String(100), nullable=True, index=True)
+    user_email = Column(String(255), nullable=True)
+    feedback_type = Column(String(50), default="general") # sugerencia, informacion_imprecisa, error_tecnico, general
+    rating = Column(Integer, nullable=True)
+    comments = Column(Text, nullable=False)
+    has_transcript = Column(Boolean, default=False)
+    transcript_json = Column(Text, nullable=True)
+    target_email = Column(String(255), default="canigraduateud@gmail.com")
+    status = Column(String(50), default="RECEIVED")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 

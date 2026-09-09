@@ -71,7 +71,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
     activeTab = "knowledge";
   } else {
     const tabParam = searchParams.get("tab") as AdminTab | null;
-    if (tabParam && ["analytics", "triage", "knowledge", "settings"].includes(tabParam)) {
+    if (tabParam && ["analytics", "triage", "knowledge", "settings", "feedback"].includes(tabParam)) {
       activeTab = tabParam;
     }
   }
@@ -101,6 +101,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
     triage: "Bandeja de Triage",
     knowledge: "Base de Conocimiento",
     settings: "Guardrails & Autogestión",
+    feedback: "Feedbacks de Sesión",
   };
 
   return (

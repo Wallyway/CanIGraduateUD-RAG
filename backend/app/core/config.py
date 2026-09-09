@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     # Inbound Webhook Secret for Power Automate / Email Relay
     WEBHOOK_SECRET_KEY: str = "ud-incoming-email-webhook-secret-token-12345"
 
+    # SMTP / Feedback Email Delivery
+    FEEDBACK_TARGET_EMAIL: str = "canigraduateud@gmail.com"
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_TLS: bool = True
+
 
     # Storage Paths
     DATA_DIR: str = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")

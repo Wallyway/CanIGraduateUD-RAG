@@ -49,7 +49,7 @@ export const CitationBadge: React.FC<CitationBadgeProps> = ({ citation }) => {
             target="_blank"
             rel="noopener noreferrer"
             className="px-2 py-1 border-l border-amber-500/20 text-amber-400/80 hover:text-amber-300 hover:bg-amber-500/20 transition-colors inline-flex items-center"
-            title="Abrir PDF oficial en nueva pestaña"
+            title="Abrir documento o PDF oficial en nueva pestaña"
             onClick={(e) => e.stopPropagation()}
           >
             <ExternalLink className="w-3 h-3" />
@@ -119,7 +119,7 @@ export const CitationBadge: React.FC<CitationBadgeProps> = ({ citation }) => {
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-semibold text-xs rounded-xl transition shadow-sm"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Ver PDF Oficial en pestaña nueva</span>
+                  <span>Ver Documento / PDF Oficial</span>
                 </a>
               ) : (
                 <div />

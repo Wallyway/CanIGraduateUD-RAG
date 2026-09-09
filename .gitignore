@@ -12,9 +12,9 @@ develop-eggs/
 dist/
 downloads/
 eggs/
-.eggs/
-lib/
-lib64/
+/lib/
+/lib64/
+!frontend/src/lib/
 parts/
 sdist/
 var/
@@ -36,6 +36,10 @@ frontend/node_modules/
 frontend/.next/
 frontend/out/
 frontend/.pnpm-store/
+package-lock.json
+frontend/package-lock.json
+yarn.lock
+frontend/yarn.lock
 
 # Environment variables
 .env

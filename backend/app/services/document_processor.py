@@ -86,19 +86,118 @@ class DocumentProcessor:
         try:
             reader = PdfReader(file_path)
             for i, page in enumerate(reader.pages):
-                page_text = page.extract_text() or ""
+                try:
+                    page_text = page.extract_text(extraction_mode="layout") or ""
+                except Exception:
+                    page_text = page.extract_text() or ""
                 clean_text = self.clean_shadow_duplicates(page_text)
+
+                lines = clean_text.split('\n')
+                if i > 0:
+                    filtered_lines = []
+                    in_running_header = True
+                    for line_idx, line in enumerate(lines):
+                        stripped = line.strip()
+                        if in_running_header and line_idx < 15:
+                            if any(kw in stripped.upper() for kw in [
+                                'UNIVERSIDAD DISTRITAL',
+                                'FRANCISCO JOSÉ DE CALDAS',
+                                'CONSEJO ACADEMICO',
+                                'CONSEJO ACADÉMICO',
+                                'CONSEJO SUPERIOR',
+                                'ACUERDO N°',
+                                'ACUERDO NO',
+                                'ACUERDO NUMERO',
+                                'RESOLUCIÓN N°',
+                                'RESOLUCION N°',
+                            ]) or (stripped.startswith('"Por ') or stripped.startswith('“Por ') or stripped.endswith('Caldas"') or stripped.endswith('Caldas”')) or re.match(r'^\([A-Za-z]+\s+\d+\s+de\s+\d+\)$', stripped) or re.match(r'^[A-Z0-9\^\{\}\*]{1,6}$', stripped):
+                                continue
+                            elif not stripped:
+                                continue
+                            else:
+                                in_running_header = False
+
+                        if re.search(r'P[áa]gina\s+\d+\s+de(?:\s+\d+)?', stripped, re.IGNORECASE):
+                            continue
+
+                        filtered_lines.append(re.sub(r'[ \t]{2,}', ' ', stripped))
+                    clean_text = '\n'.join(filtered_lines)
+                else:
+                    lines = [re.sub(r'[ \t]{2,}', ' ', l).strip() for l in lines if not re.search(r'P[áa]gina\s+\d+\s+de(?:\s+\d+)?', l, re.IGNORECASE)]
+                    clean_text = '\n'.join(lines)
+
                 text_parts.append(f"\n--- [Página {i+1}] ---\n{clean_text}")
         except Exception as e:
             logger.error(f"Error reading PDF {file_path}: {e}")
             raise e
         return "\n".join(text_parts)
 
+    def extract_official_metadata(self, text: str) -> Dict[str, str]:
+        """
+        Extracts official agreement / resolution title, number, entity, and date
+        from university regulatory text.
+        """
+        main_norm = re.search(
+            r'(ACUERDO|RESOLUCI[OÓ]N|CIRCULAR)\s*(?:N[°o]\.?|No\.?)?\s*(\d+)[\s\n]*\(([A-Za-z]+)\s+(\d{1,2})\s+de\s+(\d{4})\)',
+            text,
+            re.IGNORECASE
+        )
+        body_match = re.search(
+            r'(CONSEJO\s+(?:ACAD[EÉ]MICO|SUPERIOR(?:\s+UNIVERSITARIO)?))',
+            text,
+            re.IGNORECASE
+        )
+        body_str = body_match.group(1).title() if body_match else ''
+
+        months = {
+            'enero': '01', 'febrero': '02', 'marzo': '03', 'abril': '04', 'mayo': '05', 'junio': '06',
+            'julio': '07', 'agosto': '08', 'septiembre': '09', 'octubre': '10', 'noviembre': '11', 'diciembre': '12'
+        }
+
+        if main_norm:
+            norm_type, num_str, m_name, day, yr = main_norm.groups()
+            doc_num = int(num_str)
+            m_num = months.get(m_name.lower(), '01')
+            iso_date = f'{yr}-{m_num}-{int(day):02d}'
+            res_num = f'{norm_type.title()} {doc_num:03d} de {yr}'
+        else:
+            res_match = re.search(r'(ACUERDO|RESOLUCI[OÓ]N|CIRCULAR)\s*(?:N[°o]\.?|No\.?)?\s*(\d+)', text, re.IGNORECASE)
+            date_match = re.search(r'\(([A-Za-z]+)\s+(\d{1,2})\s+de\s+(\d{4})\)', text)
+            if res_match and date_match:
+                m_name, day, yr = date_match.groups()
+                m_num = months.get(m_name.lower(), '01')
+                iso_date = f'{yr}-{m_num}-{int(day):02d}'
+                res_num = f'{res_match.group(1).title()} {int(res_match.group(2)):03d} de {yr}'
+            elif res_match:
+                res_num = f'{res_match.group(1).title()} {int(res_match.group(2)):03d}'
+                iso_date = ''
+            else:
+                res_num = ''
+                iso_date = ''
+
+        if body_str and res_num:
+            res_num += f' - {body_str}'
+
+        title_match = re.search(r'[\"“](Por (?:el|la) cual[^\n\"”]+(?:\n[^\n\"”]+)*)[\"”]', text, re.IGNORECASE)
+        purpose = re.sub(r'\s+', ' ', title_match.group(1)).strip() if title_match else ''
+        clean_title = res_num or 'Resolución Oficial'
+        if purpose:
+            if len(purpose) > 130:
+                clean_title += f': {purpose[:127]}...'
+            else:
+                clean_title += f': {purpose}'
+
+        return {
+            'resolution_number': res_num,
+            'title': clean_title,
+            'effective_date': iso_date
+        }
+
     def chunk_normative_text(
         self,
         text: str,
         doc_metadata: Dict[str, Any],
-        max_chunk_size: int = 1200,
+        max_chunk_size: int = 1800,
         overlap: int = 200
     ) -> Tuple[List[str], List[Dict[str, Any]], List[str]]:
         """

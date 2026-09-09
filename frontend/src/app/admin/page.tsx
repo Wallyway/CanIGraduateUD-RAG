@@ -23,8 +23,9 @@ import { EmailTriageModule } from "@/components/admin/EmailTriageModule";
 import { KnowledgeBaseModule } from "@/components/admin/KnowledgeBaseModule";
 import { AnalyticsDashboardModule } from "@/components/admin/AnalyticsDashboardModule";
 import { SettingsGuardrailsModule } from "@/components/admin/SettingsGuardrailsModule";
+import { SessionFeedbackModule } from "@/components/admin/SessionFeedbackModule";
 
-type TabKey = "analytics" | "triage" | "knowledge" | "settings";
+type TabKey = "analytics" | "triage" | "knowledge" | "settings" | "feedback";
 
 function AdminDashboardContent() {
   const searchParams = useSearchParams();
@@ -36,6 +37,8 @@ function AdminDashboardContent() {
     pending_emails: number;
     total_documents: number;
     total_vector_chunks: number;
+    total_feedbacks?: number;
+    pending_feedbacks?: number;
     autonomous_mode: boolean;
   } | null>(null);
 
@@ -53,7 +56,7 @@ function AdminDashboardContent() {
   }, []);
 
   useEffect(() => {
-    if (tabParam && ["analytics", "triage", "knowledge", "settings"].includes(tabParam)) {
+    if (tabParam && ["analytics", "triage", "knowledge", "settings", "feedback"].includes(tabParam)) {
       setActiveTab(tabParam);
     }
   }, [tabParam]);
@@ -78,6 +81,9 @@ function AdminDashboardContent() {
         )}
         {activeTab === "settings" && (
           <SettingsGuardrailsModule />
+        )}
+        {activeTab === "feedback" && (
+          <SessionFeedbackModule />
         )}
       </div>
     </div>
