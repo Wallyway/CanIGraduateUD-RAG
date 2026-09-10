@@ -45,7 +45,8 @@ export async function streamChat(
   onToken: (token: string) => void,
   onCitations: (citations: any[]) => void,
   onDone: () => void,
-  onError: (err: any) => void
+  onError: (err: any) => void,
+  onQueue?: (data: { position: number; estimated_seconds: number }) => void
 ) {
   try {
     const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
@@ -103,6 +104,14 @@ export async function streamChat(
               onToken(parsed.content);
             } else if (parsed.type === "citations" && parsed.citations) {
               onCitations(parsed.citations);
+            } else if (parsed.type === "queue" && onQueue) {
+              onQueue({
+                position: Number(parsed.position) || 1,
+                estimated_seconds: Number(parsed.estimated_seconds) || 2,
+              });
+            } else if (parsed.type === "queue_ready" && onQueue) {
+              // Signal that permit was acquired and queue waiting is complete
+              onQueue({ position: 0, estimated_seconds: 0 });
             }
           } catch (e) {
             // ignore parse failure on partial stream

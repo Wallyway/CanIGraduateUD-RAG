@@ -1,3 +1,4 @@
+import time
 import json
 import urllib.parse
 import threading
@@ -22,6 +23,7 @@ from app.core.security_guardrails import (
 )
 from app.core.redis_cache import redis_cache
 from concurrent.futures import ThreadPoolExecutor
+from app.core.virtual_queue import virtual_queue
 import logging
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,34 @@ class SemaphoreReleaseGuard:
                     self.semaphore.release()
                 except Exception as exc:
                     logger.warning(f"[ConcurrencyGuard] Error releasing stream semaphore: {exc}")
+                try:
+                    virtual_queue.notify_available()
+                except Exception as exc:
+                    logger.warning(f"[ConcurrencyGuard] Error notifying virtual queue: {exc}")
+
+    def __del__(self):
+        self.release()
+
+
+class QueueTicketGuard:
+    """
+    Ensures that an enqueued ticket is removed from the virtual queue
+    if the response generator is abandoned, garbage collected, or fails.
+    """
+    def __init__(self, ticket):
+        self.ticket = ticket
+        self.released = False
+        self._lock = threading.Lock()
+
+    def release(self):
+        with self._lock:
+            if not self.released:
+                self.released = True
+                if not getattr(self.ticket, "acquired", False):
+                    try:
+                        virtual_queue.remove_ticket(self.ticket)
+                    except Exception:
+                        pass
 
     def __del__(self):
         self.release()
@@ -280,30 +310,103 @@ def stream_chat_response(
             }
         )
 
-    # 6. Concurrency Limiter: Protect system against concurrent stream exhaustion (>150 streams)
+    # 6. Concurrency Limiter & Virtual Queue: Protect system against concurrent stream exhaustion (>150 streams)
     sem = getattr(security_guardrails, "STREAM_CONCURRENCY_SEMAPHORE", STREAM_CONCURRENCY_SEMAPHORE)
-    acquired = sem.acquire(blocking=False)
-    if not acquired:
-        def busy_stream():
-            msg = "⚠️ El sistema se encuentra atendiendo un volumen muy alto de consultas simultáneas. Por favor reintenta en unos instantes."
-            yield f"data: {json.dumps({'type': 'token', 'content': msg}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
-        return StreamingResponse(
-            busy_stream(),
-            media_type="text/event-stream",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            headers={"Retry-After": "5"}
-        )
+    permit_acquired = False
+    with virtual_queue.lock:
+        if not virtual_queue.has_waiters_locked():
+            permit_acquired = sem.acquire(blocking=False)
 
-    guard = SemaphoreReleaseGuard(sem)
+    ticket = None
+    ticket_guard = None
+    if not permit_acquired:
+        ticket = virtual_queue.enqueue()
+        if ticket is None:
+            def busy_stream():
+                msg = (
+                    "⚠️ El sistema se encuentra atendiendo un volumen muy alto de consultas simultáneas. "
+                    "Por favor reintenta tu consulta en unos instantes con un solo clic."
+                )
+                yield f"data: {json.dumps({'type': 'token', 'content': msg}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(
+                busy_stream(),
+                media_type="text/event-stream",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                headers={"Retry-After": "5"}
+            )
+        ticket_guard = QueueTicketGuard(ticket)
+
+    guard = SemaphoreReleaseGuard(sem) if permit_acquired else None
 
     def event_generator():
+        nonlocal guard
         citation_count = 0
         collected_tokens = []
         collected_citations = []
         stream_success = False
         stream_had_error_event = False
+        stop_worker = None
+
+        if ticket is not None:
+            slot_acquired = False
+            start_wait = time.time()
+            max_wait = virtual_queue.get_max_wait_seconds()
+            pos = ticket.position
+            est_sec = max(1, int(pos * 2))
+
+            # Immediate SSE queue event
+            yield f"data: {json.dumps({'type': 'queue', 'position': pos, 'estimated_seconds': est_sec}, ensure_ascii=False)}\n\n"
+
+            try:
+                while time.time() - start_wait < max_wait:
+                    if virtual_queue.try_claim_permit(ticket, sem):
+                        guard = SemaphoreReleaseGuard(sem)
+                        slot_acquired = True
+                        break
+
+                    ticket.wait(timeout=1.0)
+
+                    if virtual_queue.try_claim_permit(ticket, sem):
+                        guard = SemaphoreReleaseGuard(sem)
+                        slot_acquired = True
+                        break
+
+                    yield ": ping\n\n"
+
+                    new_pos = ticket.position
+                    if new_pos != pos:
+                        pos = new_pos
+                        est_sec = max(1, int(pos * 2))
+                        yield f"data: {json.dumps({'type': 'queue', 'position': pos, 'estimated_seconds': est_sec}, ensure_ascii=False)}\n\n"
+            except GeneratorExit:
+                if not slot_acquired:
+                    if ticket_guard:
+                        ticket_guard.release()
+                    else:
+                        virtual_queue.remove_ticket(ticket)
+                raise
+
+            if not slot_acquired:
+                if ticket_guard:
+                    ticket_guard.release()
+                else:
+                    virtual_queue.remove_ticket(ticket)
+                msg = (
+                    "⚠️ El sistema se encuentra atendiendo un volumen muy alto de consultas simultáneas. "
+                    "El tiempo de espera en la fila ha expirado. Por favor reintenta tu consulta en unos instantes con un solo clic."
+                )
+                yield f"data: {json.dumps({'type': 'token', 'content': msg}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            if ticket_guard:
+                ticket_guard.release()
+            if not guard:
+                guard = SemaphoreReleaseGuard(sem)
+            yield f"data: {json.dumps({'type': 'queue_ready'}, ensure_ascii=False)}\n\n"
 
         q: queue.Queue = queue.Queue()
         stop_worker = threading.Event()
@@ -358,7 +461,8 @@ def stream_chat_response(
                         citation_count = len(collected_citations)
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except GeneratorExit:
-            stop_worker.set()
+            if stop_worker:
+                stop_worker.set()
             raise
         except Exception as stream_err:
             logger.error(f"[ChatStream] Streaming exception: {stream_err}")
@@ -366,8 +470,21 @@ def stream_chat_response(
             yield f"data: {json.dumps({'type': 'token', 'content': err_msg}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         finally:
-            stop_worker.set()
-            guard.release()
+            if stop_worker:
+                stop_worker.set()
+            if guard:
+                guard.release()
+            elif slot_acquired:
+                try:
+                    sem.release()
+                    virtual_queue.notify_available()
+                except Exception:
+                    pass
+            elif ticket:
+                if ticket_guard:
+                    ticket_guard.release()
+                else:
+                    virtual_queue.remove_ticket(ticket)
             db_log = None
             try:
                 full_text = "".join(collected_tokens).lower()
@@ -448,22 +565,36 @@ def stream_chat_response(
 
     gen = event_generator()
 
+    response_status = status.HTTP_200_OK if permit_acquired else status.HTTP_503_SERVICE_UNAVAILABLE
+    response_headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "text/event-stream",
+        "X-Cache-Hit": "false"
+    }
+    if not permit_acquired:
+        response_headers["Retry-After"] = "5"
+
     response = StreamingResponse(
         gen,
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
-            "X-Cache-Hit": "false"
-        }
+        status_code=response_status,
+        headers=response_headers
     )
-    response._release_guard = guard
-    if hasattr(response, "body_iterator"):
-        try:
-            response.body_iterator._release_guard = guard
-        except AttributeError:
-            pass
+    if guard:
+        response._release_guard = guard
+        if hasattr(response, "body_iterator"):
+            try:
+                response.body_iterator._release_guard = guard
+            except AttributeError:
+                pass
+    if ticket_guard:
+        response._ticket_guard = ticket_guard
+        if hasattr(response, "body_iterator"):
+            try:
+                response.body_iterator._ticket_guard = ticket_guard
+            except AttributeError:
+                pass
 
     return response
 

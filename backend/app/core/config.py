@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     # Server Concurrency & Streaming Settings (>200 concurrent students)
     STREAM_CONCURRENCY_LIMIT: int = 150
     SSE_KEEPALIVE_INTERVAL_SECONDS: float = 15.0
+    QUEUE_MAX_WAIT_SECONDS: float = 15.0
+    QUEUE_CAPACITY: int = 100
 
     # CORS
     BACKEND_CORS_ORIGINS: Union[List[str], str] = ["http://localhost:3000", "http://127.0.0.1:3000"]

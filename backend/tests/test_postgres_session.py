@@ -449,12 +449,21 @@ class TestPostgresSessionAndPool(unittest.TestCase):
                 feed_count = conn.execute(text("SELECT COUNT(*) FROM session_feedbacks")).scalar()
                 sec_count = conn.execute(text("SELECT COUNT(*) FROM security_penalty_logs")).scalar()
 
-            self.assertEqual(sys_count, 4)
-            self.assertEqual(email_count, 12)
-            self.assertEqual(doc_count, 23)
-            self.assertEqual(query_count, 62)
-            self.assertEqual(feed_count, 4)
-            self.assertEqual(sec_count, 1)
+            source_engine = create_engine(f"sqlite:///{resolved_sqlite}", poolclass=StaticPool)
+            with source_engine.connect() as s_conn:
+                src_sys = s_conn.execute(text("SELECT COUNT(*) FROM system_settings")).scalar()
+                src_email = s_conn.execute(text("SELECT COUNT(*) FROM email_notices")).scalar()
+                src_doc = s_conn.execute(text("SELECT COUNT(*) FROM document_items")).scalar()
+                src_query = s_conn.execute(text("SELECT COUNT(*) FROM student_query_logs")).scalar()
+                src_feed = s_conn.execute(text("SELECT COUNT(*) FROM session_feedbacks")).scalar()
+                src_sec = s_conn.execute(text("SELECT COUNT(*) FROM security_penalty_logs")).scalar()
+
+            self.assertEqual(sys_count, src_sys)
+            self.assertEqual(email_count, src_email)
+            self.assertEqual(doc_count, src_doc)
+            self.assertEqual(query_count, src_query)
+            self.assertEqual(feed_count, src_feed)
+            self.assertEqual(sec_count, src_sec)
 
             # 2. Test Idempotency: re-running without --clean shouldn't fail
             idempotent_success = migrate(
@@ -478,7 +487,7 @@ class TestPostgresSessionAndPool(unittest.TestCase):
 
             with target_engine.connect() as conn:
                 doc_count_after = conn.execute(text("SELECT COUNT(*) FROM document_items")).scalar()
-            self.assertEqual(doc_count_after, 23)
+            self.assertEqual(doc_count_after, src_doc)
 
         finally:
             if os.path.exists(target_file):

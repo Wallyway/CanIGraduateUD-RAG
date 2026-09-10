@@ -138,6 +138,7 @@ export const ChatInterface: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [queueInfo, setQueueInfo] = useState<{ position: number; estimated_seconds: number } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Session & Feedback states
@@ -243,10 +244,12 @@ export const ChatInterface: React.FC = () => {
       });
     };
 
+    setQueueInfo(null);
     await streamChat(
       text,
       historyPayload,
       (token) => {
+        setQueueInfo(null);
         currentResponseText += token;
         scheduleUpdate();
       },
@@ -288,6 +291,7 @@ export const ChatInterface: React.FC = () => {
         );
       },
       () => {
+        setQueueInfo(null);
         if (rafId !== null) {
           cancelAnimationFrame(rafId);
           rafId = null;
@@ -306,6 +310,7 @@ export const ChatInterface: React.FC = () => {
         });
       },
       (err) => {
+        setQueueInfo(null);
         if (rafId !== null) {
           cancelAnimationFrame(rafId);
           rafId = null;
@@ -325,6 +330,13 @@ export const ChatInterface: React.FC = () => {
               : msg
           )
         );
+      },
+      (queueData) => {
+        if (queueData.position > 0) {
+          setQueueInfo(queueData);
+        } else {
+          setQueueInfo(null);
+        }
       }
     );
   };
@@ -570,6 +582,20 @@ export const ChatInterface: React.FC = () => {
                             />
                           </div>
 
+                          {/* Virtual Waiting Queue Banner */}
+                          {queueInfo && queueInfo.position > 0 && isLoading && msg.id === activeAssistantId && (
+                            <div className="my-2 p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 backdrop-blur-md flex items-center gap-3 animate-pulse shadow-[0_0_18px_rgba(245,158,11,0.15)] transition-all duration-300">
+                              <span className="text-xl shrink-0">⏳</span>
+                              <div className="text-xs sm:text-sm font-medium text-amber-200/90 leading-snug">
+                                Alta afluencia de consultas. Estás en la posición{" "}
+                                <span className="font-bold text-amber-300 tabular-nums">
+                                  #{queueInfo.position}
+                                </span>{" "}
+                                de la fila (espera estimada: ~{queueInfo.estimated_seconds}s)...
+                              </div>
+                            </div>
+                          )}
+
                           {/* Markdown Response Content or Active Waiting State */}
                           {msg.content ? (
                             <div className="max-w-none text-neutral-200 leading-relaxed text-sm md:text-base break-words font-normal pt-1.5 select-text">
@@ -584,7 +610,7 @@ export const ChatInterface: React.FC = () => {
                               )}
                             </div>
                           ) : (
-                            isLoading && msg.id === activeAssistantId && (
+                            isLoading && msg.id === activeAssistantId && !queueInfo && (
                               <div className="flex items-center gap-2 pt-1 pb-0.5 text-xs text-neutral-400 font-mono">
                                 <span className="w-1.5 h-3.5 bg-amber-400/90 rounded-xs animate-pulse inline-block" />
                                 <span className="text-[12px] text-neutral-400">
@@ -606,6 +632,25 @@ export const ChatInterface: React.FC = () => {
                                   <CitationBadge key={idx} citation={cit} />
                                 ))}
                               </div>
+                            </div>
+                          )}
+
+                          {/* 1-Click Retry Action Button for Saturated/Timed Out Requests */}
+                          {msg.content && !isLoading && (msg.content.includes("reintenta") || msg.content.includes("volumen muy alto")) && (
+                            <div className="mt-2.5">
+                              <button
+                                onClick={() => {
+                                  const idx = messages.findIndex((m) => m.id === msg.id);
+                                  const prevUserMsg = idx > 0 ? messages[idx - 1] : null;
+                                  if (prevUserMsg && prevUserMsg.role === "user" && prevUserMsg.content) {
+                                    handleSend(prevUserMsg.content);
+                                  }
+                                }}
+                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-medium transition-all shadow-sm active:scale-95 cursor-pointer"
+                              >
+                                <span>🔄</span>
+                                <span>Reintentar consulta con 1 clic</span>
+                              </button>
                             </div>
                           )}
 
