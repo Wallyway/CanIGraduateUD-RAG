@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 *.so
@@ -52,4 +53,7 @@ frontend/.env.local
 # OS
 .DS_Store
 Thumbs.db
+
+# Teamwork agent traces
+.agents/
 

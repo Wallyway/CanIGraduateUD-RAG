@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import unittest
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -168,10 +169,20 @@ class TestPostgresSessionAndPool(unittest.TestCase):
 
     def test_sqlite_check_same_thread_disabled(self):
         """Verifies that SQLite engines configure check_same_thread=False for async FastAPI workers."""
-        engine = create_db_engine("sqlite:///tmp_test.sqlite")
-        with engine.connect() as conn:
-            res = conn.execute(select(1)).scalar()
-            self.assertEqual(res, 1)
+        with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+            temp_path = tmp.name
+        try:
+            engine = create_db_engine(f"sqlite:///{temp_path}")
+            with engine.connect() as conn:
+                res = conn.execute(select(1)).scalar()
+                self.assertEqual(res, 1)
+            engine.dispose()
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
 
     # ==========================================================================
     # 4. DIALECT-AGNOSTIC DDL COMPILATION (POSTGRESQL & SQLITE)
