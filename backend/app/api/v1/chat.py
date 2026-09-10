@@ -272,8 +272,11 @@ def stream_chat_response(
         collected_tokens = []
         collected_citations = []
         stream_success = False
+        stream_had_error_event = False
         try:
             for event in rag_service.answer_stream(payload.query, history_dicts):
+                if event.get("is_error"):
+                    stream_had_error_event = True
                 if event.get("type") == "token":
                     collected_tokens.append(event.get("content", ""))
                 elif event.get("type") == "citations":
@@ -292,6 +295,23 @@ def stream_chat_response(
             db_log = None
             try:
                 full_text = "".join(collected_tokens).lower()
+                system_error_markers = [
+                    "*(conexión interrumpida",
+                    "*(conexion interrumpida",
+                    "[error de comunicación con el modelo",
+                    "[error de comunicacion con el modelo",
+                    "*(error temporal durante la generación",
+                    "*(error temporal durante la generacion",
+                    "*(error temporal en la transmisión",
+                    "*(error temporal en la transmision",
+                ]
+                has_system_marker = any(
+                    marker in token.lower()
+                    for token in collected_tokens
+                    for marker in system_error_markers
+                )
+                has_stream_error = (not stream_success) or stream_had_error_event or has_system_marker
+
                 gap_phrases = [
                     "no registran información",
                     "no registra información",
@@ -316,7 +336,10 @@ def stream_chat_response(
                     "trámite específico"
                 ]
                 is_other = is_other_career_or_faculty(payload.query)
-                if is_other:
+                if has_stream_error:
+                    has_gap = True
+                    confidence = 0.0
+                elif is_other:
                     has_gap = False
                     confidence = 1.0
                 else:
@@ -343,7 +366,7 @@ def stream_chat_response(
             # Store result in cache asynchronously in background on successful completion
             if stream_success and collected_tokens:
                 full_answer = "".join(collected_tokens)
-                if full_answer.strip() and not full_answer.startswith("\n\n*(Error temporal"):
+                if full_answer.strip() and not has_stream_error:
                     topic_cat = classify_topic(payload.query)
                     _submit_cache_write(payload.query, full_answer, collected_citations, topic_cat)
 

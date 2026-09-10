@@ -133,6 +133,7 @@ ACADEMIC_KEYWORDS = [
     # Requisitos, créditos, notas y cronograma
     "requisito", "requisitos", "credito", "creditos", "promedio", "ponderado", "nota", "notas",
     "calificacion", "calificaciones", "aprobacion", "reprobacion", "sustentacion", "sustentar",
+    "examen", "examenes", "evaluacion", "evaluaciones", "parcial", "parciales", "supletorio", "supletorios", "habilitacion",
     "informe", "prorroga", "plazo", "plazos", "fecha", "fechas", "calendario", "cronograma",
     "vencer", "vencimiento", "perder calidad", "sancion", "reclamo", "reclamacion", "saber pro",
     "icfes", "prerrequisito", "correquisito",

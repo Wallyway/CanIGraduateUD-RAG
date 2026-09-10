@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Union, Any
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
@@ -16,8 +16,15 @@ class Settings(BaseSettings):
     # LLM Settings
     LLM_PROVIDER: str = "openrouter"  # openrouter, openai, gemini
     OPENROUTER_API_KEY: str = ""
-    OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
+    OPENROUTER_MODEL: str = "meta-llama/llama-3.1-8b-instruct"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_FALLBACK_MODELS: Union[List[str], str] = [
+        "meta-llama/llama-3.3-70b-instruct",
+        "google/gemini-2.0-flash-001"
+    ]
+    OPENROUTER_TIMEOUT: float = 30.0
+    OPENROUTER_MAX_RETRIES: int = 3
+    OPENROUTER_BACKOFF_FACTOR: float = 1.5
 
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
@@ -80,6 +87,41 @@ class Settings(BaseSettings):
             return json.loads(v)
         except Exception:
             return ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    @field_validator("OPENROUTER_FALLBACK_MODELS", mode="before")
+    @classmethod
+    def assemble_fallback_models(cls, v: Any) -> List[str]:
+        if v is None:
+            return ["meta-llama/llama-3.3-70b-instruct", "google/gemini-2.0-flash-001"]
+        if isinstance(v, str):
+            v_str = v.strip()
+            if not v_str:
+                return []
+            if v_str.startswith("["):
+                import json
+                try:
+                    parsed = json.loads(v_str)
+                    if isinstance(parsed, list):
+                        return [str(i).strip().strip("'\"") for i in parsed if str(i).strip().strip("'\"")]
+                except Exception:
+                    pass
+                import ast
+                try:
+                    parsed = ast.literal_eval(v_str)
+                    if isinstance(parsed, list):
+                        return [str(i).strip().strip("'\"") for i in parsed if str(i).strip().strip("'\"")]
+                except Exception:
+                    pass
+            cleaned = v_str.strip("[]")
+            items = []
+            for item in cleaned.split(","):
+                clean_item = item.strip().strip("'\"")
+                if clean_item:
+                    items.append(clean_item)
+            return items
+        elif isinstance(v, (list, tuple, set)):
+            return [str(i).strip().strip("'\"") for i in v if str(i).strip().strip("'\"")]
+        return ["meta-llama/llama-3.3-70b-instruct", "google/gemini-2.0-flash-001"]
 
     def __init__(self, **values):
         super().__init__(**values)

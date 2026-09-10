@@ -210,11 +210,19 @@ class RAGService:
         )
         messages.append({"role": "user", "content": user_prompt_with_context})
 
-        # 3. Stream response from LLM
-        for text_chunk in llm_adapter.stream_chat(messages, temperature=0.25):
-            yield {"type": "token", "content": text_chunk}
+        # 3. Stream response from LLM with mid-stream resilience
+        try:
+            for text_chunk in llm_adapter.stream_chat(messages, temperature=0.25):
+                yield {"type": "token", "content": text_chunk}
+        except Exception as stream_err:
+            logger.error(f"[RAGService] Exception during LLM stream consumption: {stream_err}")
+            yield {
+                "type": "token",
+                "content": f"\n\n*(Error temporal durante la generación de la respuesta: {str(stream_err)})*",
+                "is_error": True
+            }
 
-        # 4. Send citations at the end of the stream
+        # 4. Send citations at the end of the stream (guaranteed delivery)
         yield {"type": "citations", "citations": citations}
 
     def embed_query(self, query: str) -> List[float]:

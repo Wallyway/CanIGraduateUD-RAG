@@ -1,10 +1,73 @@
 import json
 import logging
+import time
 from typing import List, Dict, Any, Generator, Optional
+import openai
 from openai import OpenAI
+import httpx
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+def is_transient_error(e: Exception) -> bool:
+    """
+    Checks if an exception is a transient error that should be retried
+    with exponential backoff (e.g. 429 Too Many Requests, 502 Bad Gateway,
+    503 Service Unavailable, 504 Gateway Timeout, connection reset, timeouts).
+    Definitive 4xx client errors (400, 401, 403, 404, 422) are never retried.
+    """
+    # 1. Inspect explicit HTTP status codes
+    status_code = getattr(e, "status_code", getattr(e, "code", None))
+    if status_code is None and isinstance(e, httpx.HTTPStatusError) and e.response is not None:
+        status_code = e.response.status_code
+
+    if status_code is not None:
+        try:
+            code_int = int(status_code)
+            if code_int in {429, 500, 502, 503, 504} or (520 <= code_int <= 530):
+                return True
+            # Permanent 4xx client errors (400, 401, 403, 404, 422) must never be retried
+            if 400 <= code_int < 500:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Permanent OpenAI exception classes
+    if isinstance(e, (openai.AuthenticationError, openai.BadRequestError, openai.NotFoundError, openai.PermissionDeniedError)):
+        return False
+
+    # 3. Direct OpenAI exception classes for transient issues
+    if isinstance(e, (openai.RateLimitError, openai.APIConnectionError, openai.APITimeoutError, openai.InternalServerError)):
+        return True
+
+    # 4. HTTPX transport / network exceptions
+    if isinstance(e, (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError, httpx.ReadError)):
+        return True
+
+    # 5. String inspection fallback: guard against permanent 4xx before checking status codes
+    import re
+    msg = str(e).lower()
+
+    # If message indicates a permanent 4xx client error (and not a 429 rate limit), reject immediately
+    if re.search(r"\b(400|401|403|404|422)\b", msg) and not re.search(r"\b429\b", msg):
+        return False
+    if any(p in msg for p in ["bad request", "unauthorized", "invalid api key", "not found", "permission denied"]):
+        return False
+
+    if re.search(r"\b(429|500|502|503|504|520|521|522|524)\b", msg):
+        return True
+
+    phrase_markers = [
+        "rate limit", "too many requests", "bad gateway",
+        "service unavailable", "gateway timeout", "connection error",
+        "connection reset", "connection refused", "timed out",
+        "read timeout", "connect timeout", "overloaded"
+    ]
+    if any(marker in msg for marker in phrase_markers):
+        return True
+
+    return False
+
 
 def _is_repetition_loop(accumulated_text: str, min_phrase_len: int = 35, max_occurrences: int = 3) -> bool:
     """
@@ -55,6 +118,8 @@ class LLMAdapter:
             self.client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
+                timeout=settings.OPENROUTER_TIMEOUT,
+                max_retries=0,
                 default_headers={
                     "HTTP-Referer": "https://github.com/CanIGraduateUD",
                     "X-Title": "CanIGraduateUD-RAG"
@@ -65,17 +130,48 @@ class LLMAdapter:
             self.model_name = settings.GEMINI_MODEL
             self.client = OpenAI(
                 api_key=api_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                timeout=settings.OPENROUTER_TIMEOUT,
+                max_retries=0
             )
         else:
             api_key = settings.OPENAI_API_KEY or "dummy_key"
             self.model_name = settings.OPENAI_MODEL
-            self.client = OpenAI(api_key=api_key)
+            self.client = OpenAI(
+                api_key=api_key,
+                timeout=settings.OPENROUTER_TIMEOUT,
+                max_retries=0
+            )
+
+    def _get_api_key(self) -> str:
+        if self.provider == "openrouter":
+            return settings.OPENROUTER_API_KEY
+        elif self.provider == "gemini":
+            return settings.GEMINI_API_KEY
+        return settings.OPENAI_API_KEY
+
+    def get_openrouter_models(self) -> List[str]:
+        """
+        Builds the fallback models list for OpenRouter's native router:
+        [primary_model, *fallback_models] preserving order and eliminating duplicates.
+        """
+        primary = (self.model_name or settings.OPENROUTER_MODEL or "").strip().strip("'\"")
+        fallbacks = settings.OPENROUTER_FALLBACK_MODELS
+        if isinstance(fallbacks, str):
+            fallbacks = [m.strip().strip("'\"") for m in fallbacks.split(",") if m.strip().strip("'\"")]
+
+        models = [primary] if primary else []
+        for m in (fallbacks or []):
+            clean_m = str(m).strip().strip("'\"")
+            if clean_m and clean_m not in models:
+                models.append(clean_m)
+        return models
+
 
     def stream_chat(self, messages: List[Dict[str, str]], temperature: float = 0.25) -> Generator[str, None, None]:
-        """Streams completion chunks from the selected LLM provider with anti-loop guardrails."""
+        """Streams completion chunks from the selected LLM provider with OpenRouter fallback and anti-loop guardrails."""
         # Check if dummy key is present
-        api_key = settings.OPENROUTER_API_KEY if self.provider == "openrouter" else settings.OPENAI_API_KEY
+        api_key = self._get_api_key()
         if not api_key or "your-" in api_key or "dummy" in api_key:
             # Fallback mock streaming generator for testing without configured API key
             yield "*(Aviso: Clave de API de OpenRouter no configurada en .env. Modo demostración activo)*\n\n"
@@ -91,36 +187,127 @@ class LLMAdapter:
             "frequency_penalty": 0.3,
             "presence_penalty": 0.15,
         }
-        if "llama" in self.model_name.lower():
+        if "llama" in (self.model_name or "").lower():
             extra_kwargs["stop"] = ["<|eot_id|>", "<|eom_id|>", "<|end_of_text|>", "</s>"]
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=2048,
-                stream=True,
-                **extra_kwargs
-            )
-            accumulated_response = ""
-            for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    delta = chunk.choices[0].delta.content
-                    accumulated_response += delta
-                    if _is_repetition_loop(accumulated_response):
-                        logger.warning(
-                            f"[LLMAdapter] Repetition loop trap detected for model '{self.model_name}'. Safely breaking stream."
-                        )
-                        break
-                    yield delta
-        except Exception as e:
-            logger.error(f"Error calling LLM stream: {e}")
-            yield f"\n\n[Error de comunicación con el modelo LLM ({self.provider}): {str(e)}. Por favor verifica tu API Key en el archivo .env]"
+        if self.provider == "openrouter":
+            extra_kwargs["extra_body"] = {"models": self.get_openrouter_models()}
+            extra_kwargs["timeout"] = settings.OPENROUTER_TIMEOUT
+
+        max_retries = settings.OPENROUTER_MAX_RETRIES if self.provider == "openrouter" else 1
+        backoff_factor = settings.OPENROUTER_BACKOFF_FACTOR
+
+        tokens_emitted = 0
+        for attempt in range(1, max_retries + 2):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=2048,
+                    stream=True,
+                    **extra_kwargs
+                )
+                accumulated_response = ""
+                for chunk in response:
+                    delta = None
+                    if chunk and hasattr(chunk, "choices") and chunk.choices:
+                        choice = chunk.choices[0]
+                        choice_delta = getattr(choice, "delta", None)
+                        if isinstance(choice_delta, dict):
+                            delta = choice_delta.get("content")
+                        elif choice_delta is not None:
+                            delta = getattr(choice_delta, "content", None)
+                    if delta:
+                        accumulated_response += delta
+                        if _is_repetition_loop(accumulated_response):
+                            logger.warning(
+                                f"[LLMAdapter] Repetition loop trap detected for model '{self.model_name}'. Safely breaking stream."
+                            )
+                            return
+                        tokens_emitted += 1
+                        yield delta
+                # Stream completed successfully
+                return
+            except Exception as e:
+                # If tokens were already emitted to the consumer, we cannot cleanly restart without duplicating text
+                if tokens_emitted > 0:
+                    logger.error(
+                        f"[LLMAdapter] Stream interrupted mid-generation after {tokens_emitted} tokens: {e}"
+                    )
+                    yield f"\n\n*(Conexión interrumpida durante la generación de la respuesta. Por favor reintenta tu consulta.)*"
+                    return
+
+                # No tokens emitted yet; check if retryable transient error
+                is_transient = is_transient_error(e)
+                if is_transient and attempt <= max_retries:
+                    delay = backoff_factor ** attempt
+                    logger.warning(
+                        f"[LLMAdapter] Transient error on stream attempt {attempt}/{max_retries + 1}: {e}. "
+                        f"Retrying in {delay:.2f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"[LLMAdapter] Stream failed after attempt {attempt}: {e}")
+                    yield f"\n\n[Error de comunicación con el modelo LLM ({self.provider}): {str(e)}. Por favor verifica tu API Key en el archivo .env]"
+                    return
+
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.25,
+        max_tokens: int = 2048
+    ) -> str:
+        """Non-streaming completion with OpenRouter fallback and exponential backoff retry."""
+        api_key = self._get_api_key()
+        if not api_key or "your-" in api_key or "dummy" in api_key:
+            return "Respuesta generada en modo demostración."
+
+        extra_kwargs: Dict[str, Any] = {
+            "frequency_penalty": 0.3,
+            "presence_penalty": 0.15,
+        }
+        if "llama" in (self.model_name or "").lower():
+            extra_kwargs["stop"] = ["<|eot_id|>", "<|eom_id|>", "<|end_of_text|>", "</s>"]
+
+        if self.provider == "openrouter":
+            extra_kwargs["extra_body"] = {"models": self.get_openrouter_models()}
+            extra_kwargs["timeout"] = settings.OPENROUTER_TIMEOUT
+
+        max_retries = settings.OPENROUTER_MAX_RETRIES if self.provider == "openrouter" else 1
+        backoff_factor = settings.OPENROUTER_BACKOFF_FACTOR
+
+        for attempt in range(1, max_retries + 2):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False,
+                    **extra_kwargs
+                )
+                if response.choices and response.choices[0].message:
+                    return response.choices[0].message.content or ""
+                return ""
+            except Exception as e:
+                is_transient = is_transient_error(e)
+                if is_transient and attempt <= max_retries:
+                    delay = backoff_factor ** attempt
+                    logger.warning(
+                        f"[LLMAdapter] Transient error in chat_completion on attempt {attempt}/{max_retries + 1}: {e}. "
+                        f"Retrying in {delay:.2f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"[LLMAdapter] chat_completion failed after {attempt} attempts: {e}")
+                    raise e
 
     def generate_json(self, messages: List[Dict[str, str]], temperature: float = 0.1) -> Dict[str, Any]:
-        """Generates structured JSON response (used for LLM triage of emails)."""
-        api_key = settings.OPENROUTER_API_KEY if self.provider == "openrouter" else settings.OPENAI_API_KEY
+        """Generates structured JSON response (used for LLM triage of emails) with retry logic."""
+        api_key = self._get_api_key()
         if not api_key or "your-" in api_key or "dummy" in api_key:
             # Smart rule-based simulation for testing without API key
             user_text = " ".join([m.get("content", "") for m in messages]).lower()
@@ -135,53 +322,76 @@ class LLMAdapter:
                 "recommended_action": "INDEX" if is_relevant else "IGNORE"
             }
 
-        try:
+        extra_kwargs: Dict[str, Any] = {}
+        if self.provider == "openrouter":
+            extra_kwargs["extra_body"] = {"models": self.get_openrouter_models()}
+            extra_kwargs["timeout"] = settings.OPENROUTER_TIMEOUT
+
+        max_retries = settings.OPENROUTER_MAX_RETRIES if self.provider == "openrouter" else 1
+        backoff_factor = settings.OPENROUTER_BACKOFF_FACTOR
+
+        for attempt in range(1, max_retries + 2):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=1500,
-                    response_format={"type": "json_object"}
-                )
-            except Exception:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=1500
-                )
+                try:
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=1500,
+                        response_format={"type": "json_object"},
+                        **extra_kwargs
+                    )
+                except Exception as json_mode_err:
+                    if is_transient_error(json_mode_err):
+                        raise json_mode_err
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=1500,
+                        **extra_kwargs
+                    )
 
-            raw_choice = response.choices[0] if response.choices else None
-            content = raw_choice.message.content if raw_choice and raw_choice.message else ""
-            if not content:
-                content = str(getattr(raw_choice.message, "refusal", "") or "")
+                raw_choice = response.choices[0] if response.choices else None
+                content = raw_choice.message.content if raw_choice and raw_choice.message else ""
+                if not content:
+                    content = str(getattr(raw_choice.message, "refusal", "") or "")
 
-            clean_json = (content or "").strip()
-            if "```json" in clean_json:
-                clean_json = clean_json.split("```json")[1].split("```")[0].strip()
-            elif "```" in clean_json:
-                clean_json = clean_json.split("```")[1].split("```")[0].strip()
+                clean_json = (content or "").strip()
+                if "```json" in clean_json:
+                    clean_json = clean_json.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_json:
+                    clean_json = clean_json.split("```")[1].split("```")[0].strip()
 
-            start_brace = clean_json.find("{")
-            end_brace = clean_json.rfind("}")
-            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
-                clean_json = clean_json[start_brace:end_brace + 1]
+                start_brace = clean_json.find("{")
+                end_brace = clean_json.rfind("}")
+                if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                    clean_json = clean_json[start_brace:end_brace + 1]
 
-            return json.loads(clean_json)
-        except Exception as e:
-            logger.error(f"Error in generate_json: {e}")
-            # Fallback parse for triage if messages contain email cues
-            user_text = " ".join([m.get("content", "") for m in messages]).lower()
-            is_relevant = any(kw in user_text for kw in ["sistemas", "grado", "grados", "pasantia", "monografia", "ilud", "comunicado"])
-            return {
-                "is_relevant": is_relevant,
-                "relevance_score": 90.0 if is_relevant else 20.0,
-                "target_program": "Ingeniería de Sistemas",
-                "summary": "Procesado con clasificación heurística de contingencia.",
-                "reasoning": f"Clasificación generada por el agente de contingencia: {str(e)}",
-                "recommended_action": "INDEX" if is_relevant else "IGNORE"
-            }
+                return json.loads(clean_json)
+            except Exception as e:
+                is_transient = is_transient_error(e)
+                if is_transient and attempt <= max_retries:
+                    delay = backoff_factor ** attempt
+                    logger.warning(
+                        f"[LLMAdapter] Transient error in generate_json on attempt {attempt}/{max_retries + 1}: {e}. "
+                        f"Retrying in {delay:.2f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"[LLMAdapter] Error in generate_json after {attempt} attempts: {e}")
+                    # Fallback parse for triage if messages contain email cues
+                    user_text = " ".join([m.get("content", "") for m in messages]).lower()
+                    is_relevant = any(kw in user_text for kw in ["sistemas", "grado", "grados", "pasantia", "monografia", "ilud", "comunicado"])
+                    return {
+                        "is_relevant": is_relevant,
+                        "relevance_score": 90.0 if is_relevant else 20.0,
+                        "target_program": "Ingeniería de Sistemas",
+                        "summary": "Procesado con clasificación heurística de contingencia.",
+                        "reasoning": f"Clasificación generada por el agente de contingencia tras agotar reintentos: {str(e)}",
+                        "recommended_action": "INDEX" if is_relevant else "IGNORE"
+                    }
 
     def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Generates embeddings for vector store."""
@@ -194,7 +404,8 @@ class LLMAdapter:
             # If using OpenRouter or OpenAI
             response = self.client.embeddings.create(
                 model=settings.EMBEDDING_MODEL,
-                input=texts
+                input=texts,
+                timeout=settings.OPENROUTER_TIMEOUT
             )
             return [data.embedding for data in response.data]
         except Exception as e:
