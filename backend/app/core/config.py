@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_DIRECTORY: str = ""
     DATABASE_URL: str = ""
 
+    # Database Pool Settings (High Concurrency > 200 users)
+    DB_POOL_SIZE: int = 30
+    DB_MAX_OVERFLOW: int = 50
+    DB_POOL_RECYCLE: int = 1800
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_PRE_PING: bool = True
+
     # CORS
     BACKEND_CORS_ORIGINS: Union[List[str], str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
@@ -80,6 +87,10 @@ class Settings(BaseSettings):
             self.CHROMA_PERSIST_DIRECTORY = os.path.join(self.DATA_DIR, "chroma")
         if not self.DATABASE_URL:
             self.DATABASE_URL = f"sqlite:///{os.path.join(self.DATA_DIR, 'database.sqlite')}"
+        elif self.DATABASE_URL.strip().lower().startswith("postgres://"):
+            # Normalize legacy postgres:// scheme to postgresql://
+            clean_url = self.DATABASE_URL.strip()
+            self.DATABASE_URL = "postgresql://" + clean_url[11:]
         
         # Ensure directories exist
         os.makedirs(self.DATA_DIR, exist_ok=True)

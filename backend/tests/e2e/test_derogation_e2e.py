@@ -7,7 +7,7 @@ backend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if backend_root not in sys.path:
     sys.path.insert(0, backend_root)
 
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, init_db
 from app.db.models import DocumentItem
 from app.services.vector_store import vector_store
 from app.services.document_processor import document_processor
@@ -31,6 +31,7 @@ def test_granular_and_total_derogation_e2e():
     print("EJECUTANDO SUITE E2E DEDICADA: tests/e2e/test_derogation_e2e.py")
     print("="*80 + "\n")
 
+    init_db()
     db = SessionLocal()
     try:
         # ----------------------------------------------------------------------

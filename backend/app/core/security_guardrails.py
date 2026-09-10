@@ -220,11 +220,21 @@ def extract_client_info(request: Request) -> Dict[str, str]:
     ip = extract_client_ip(request)
     subnet = calculate_subnet(ip)
     
+    device_id_query = ""
+    mac_query = ""
+    try:
+        scope = getattr(request, "scope", {})
+        if isinstance(scope, dict) and "query_string" in scope:
+            device_id_query = request.query_params.get("device_id") or ""
+            mac_query = request.query_params.get("mac") or ""
+    except Exception:
+        pass
+
     # Frontend provides persistent device UUID via header or query
     device_id = (
         request.headers.get("x-device-id") or
         request.headers.get("x-client-fingerprint") or
-        request.query_params.get("device_id") or
+        device_id_query or
         ""
     ).strip()
 
@@ -233,7 +243,7 @@ def extract_client_info(request: Request) -> Dict[str, str]:
         request.headers.get("x-mac-address") or
         request.headers.get("x-client-mac") or
         request.headers.get("x-device-mac") or
-        request.query_params.get("mac") or
+        mac_query or
         ""
     ).strip()
 

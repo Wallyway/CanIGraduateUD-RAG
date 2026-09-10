@@ -1,13 +1,40 @@
 version: "3.9"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: can-i-graduate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-can_i_graduate}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-can_i_graduate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4096M
+        reservations:
+          memory: 1024M
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: can-i-graduate-backend
     restart: unless-stopped
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     volumes:
@@ -19,13 +46,29 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - CHROMA_PERSIST_DIRECTORY=/app/data/chroma
-      - DATABASE_URL=sqlite:////app/data/database.sqlite
+      - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-can_i_graduate}
       - DATA_DIR=/app/data
+      - DB_POOL_SIZE=30
+      - DB_MAX_OVERFLOW=50
+      - DB_POOL_RECYCLE=1800
+      - DB_POOL_TIMEOUT=30
+      - DB_POOL_PRE_PING=true
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
-      interval: 30s
-      timeout: 10s
+      interval: 15s
+      timeout: 5s
       retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "3.0"
+          memory: 8192M
+        reservations:
+          memory: 2048M
 
   frontend:
     build:
@@ -38,9 +81,34 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 4096M
+        reservations:
+          memory: 1024M
+
+  # Optional Cloudflare Tunnel for secure public access without public port exposure
+  # Activate with: docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: can-i-graduate-tunnel
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - frontend
       - backend
+
+volumes:
+  postgres_data:
+    driver: local
 
 networks:
   default:
     name: can-i-graduate-network
-

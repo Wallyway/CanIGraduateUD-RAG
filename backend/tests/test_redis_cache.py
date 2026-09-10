@@ -322,6 +322,9 @@ def test_chat_stream_cache_hit_integration():
     from fastapi.testclient import TestClient
     from app.main import app
 
+    from app.db.session import init_db
+    init_db()
+
     # Reset global cache for clean test
     redis_cache.invalidate_all()
 
@@ -349,7 +352,8 @@ def test_chat_stream_cache_hit_integration():
     ]
 
     # First request: Cache Miss -> calls rag_service.answer_stream
-    with patch.object(rag_service, "answer_stream", return_value=mock_events):
+    with patch.object(rag_service, "answer_stream", return_value=mock_events), \
+         patch.object(rag_service, "embed_query", return_value=[0.1] * 384):
         resp1 = client.post(
             "/api/v1/chat/stream",
             json={"query": test_query, "history": []},
@@ -538,15 +542,28 @@ def test_client_generator_exit_resilience():
     response = stream_chat_response(request=mock_req, payload=mock_payload, db=mock_db)
     gen = response.body_iterator
 
-    # Consume first item
-    first_chunk = next(gen)
-    assert first_chunk is not None
-
-    # Simulate client disconnect by closing generator early
-    try:
-        gen.close()
-    except RuntimeError as r_err:
-        pytest.fail(f"Generator close raised RuntimeError: {r_err}")
+    # Consume first item and simulate client disconnect by closing generator early
+    if hasattr(gen, "__anext__"):
+        import asyncio
+        first_chunk = asyncio.run(gen.__anext__())
+        assert first_chunk is not None
+        try:
+            asyncio.run(gen.aclose())
+        except RuntimeError as r_err:
+            if pytest:
+                pytest.fail(f"Generator close raised RuntimeError: {r_err}")
+            else:
+                raise
+    else:
+        first_chunk = next(gen)
+        assert first_chunk is not None
+        try:
+            gen.close()
+        except RuntimeError as r_err:
+            if pytest:
+                pytest.fail(f"Generator close raised RuntimeError: {r_err}")
+            else:
+                raise
 
 
 # ==============================================================================
