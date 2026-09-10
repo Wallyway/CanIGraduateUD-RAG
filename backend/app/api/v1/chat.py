@@ -2,13 +2,35 @@ import json
 import urllib.parse
 from typing import List, Dict, Optional, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.services.rag_service import rag_service, is_other_career_or_faculty
 from app.db.session import SessionLocal, get_db
 from app.db.models import StudentQueryLog, SessionFeedback
 from app.api.deps import get_current_admin
+from app.core.security_guardrails import (
+    extract_client_info,
+    inspect_query_safety,
+    strike_manager,
+    rate_limiter,
+    STREAM_CONCURRENCY_SEMAPHORE
+)
+from app.core.redis_cache import redis_cache
+from concurrent.futures import ThreadPoolExecutor
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Bounded executor for asynchronous background cache writes
+_CACHE_WRITE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cache_writer")
+
+def _submit_cache_write(query: str, answer: str, citations: list, topic: str):
+    """Safely queues background cache write without thread exhaustion."""
+    try:
+        _CACHE_WRITE_EXECUTOR.submit(redis_cache.set, query, answer, citations, topic)
+    except Exception as exc:
+        logger.warning(f"[ChatCache] Failed to submit async cache write: {exc}")
 
 router = APIRouter()
 
@@ -37,28 +59,237 @@ def classify_topic(query: str) -> str:
     return "Normativa General"
 
 @router.post("/stream")
-def stream_chat_response(payload: ChatRequest):
+def stream_chat_response(
+    request: Request,
+    payload: ChatRequest,
+    db: Session = Depends(get_db)
+):
     """
     Public student chat endpoint that streams answers with official citations
-    using Server-Sent Events (SSE).
+    using Server-Sent Events (SSE), protected by multi-factor rate limiting,
+    anti-prompting defense, and a strict 3-strike 24h penalty system.
     """
+    # 1. Identify Client (IP, Subnet, Device ID, MAC, User-Agent)
+    client_info = extract_client_info(request)
+    client_ip = client_info["ip"]
+    subnet = client_info["subnet"]
+    device_id = client_info["device_id"]
+    client_mac = client_info["mac"]
+    user_agent = client_info["user_agent"]
+    client_key = f"{client_ip}_{client_mac}_{device_id}" if (device_id or client_mac) else client_ip
+
+    # 2. Gate 1: Check Active 24-Hour Ban
+    is_banned, remaining_seconds, ban_reason = strike_manager.check_penalty(
+        client_ip, subnet, device_id, client_mac
+    )
+    if is_banned:
+        hours = remaining_seconds // 3600
+        mins = (remaining_seconds % 3600) // 60
+        ban_msg = (
+            f"🚫 **Acceso Suspendido por 24 Horas (3/3 Strikes de Abuso):**\n\n"
+            f"Tu dispositivo e IP (`{client_ip}`) se encuentran bajo una suspensión temporal de 24 horas "
+            f"por consultas no autorizadas o uso indebido reiterado (Motivo: *{ban_reason}*).\n\n"
+            f"⏳ **Tiempo restante de penalización:** {hours} horas y {mins} minutos.\n\n"
+            f"🔒 *Esta restricción previene el consumo desmedido de tokens de la Universidad Distrital.*"
+        )
+        def banned_stream():
+            yield f"data: {json.dumps({'type': 'token', 'content': ban_msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            banned_stream(),
+            media_type="text/event-stream",
+            status_code=status.HTTP_403_FORBIDDEN,
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+                "X-Security-Banned": "true",
+                "Retry-After": str(remaining_seconds)
+            }
+        )
+
+    # 3. Gate 2: Volumetric Rate Limiting (max 10 req/min per client)
+    is_rate_limited, retry_after = rate_limiter.is_rate_limited(
+        endpoint_key="chat_stream",
+        client_key=client_key,
+        max_requests=10,
+        window_seconds=60
+    )
+    if is_rate_limited:
+        limit_msg = (
+            f"⏳ **Límite de Consultas Excedido (Rate Limit):**\n\n"
+            f"Has enviado demasiadas preguntas en un lapso corto de tiempo. "
+            f"Por favor espera **{retry_after} segundos** antes de enviar una nueva consulta "
+            f"para garantizar un acceso fluido y equitativo para todos los estudiantes."
+        )
+        def rate_limit_stream():
+            yield f"data: {json.dumps({'type': 'token', 'content': limit_msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            rate_limit_stream(),
+            media_type="text/event-stream",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+                "Retry-After": str(retry_after)
+            }
+        )
+
     history_dicts = [{"role": h.role, "content": h.content} for h in payload.history] if payload.history else []
+
+    # 4. Gate 3: Anti-Prompting Attack & Abuse Gate (0 Tokens!)
+    safety_check = inspect_query_safety(payload.query, history=history_dicts)
+
+    if not safety_check.is_safe:
+        strike_result = strike_manager.record_strike(
+            ip=client_ip,
+            subnet=subnet,
+            device_id=device_id,
+            mac=client_mac,
+            user_agent=user_agent,
+            query=payload.query,
+            violation_type=safety_check.violation_type or "ABUSE",
+            reason=safety_check.violation_reason or "Consulta fuera del ámbito universitario",
+            db=db
+        )
+        strike_msg = strike_result["message"]
+
+        def strike_stream():
+            words = strike_msg.split(" ")
+            for i, w in enumerate(words):
+                chunk = w if i == len(words) - 1 else w + " "
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        resp_status = status.HTTP_403_FORBIDDEN if strike_result["is_banned"] else status.HTTP_200_OK
+        return StreamingResponse(
+            strike_stream(),
+            media_type="text/event-stream",
+            status_code=resp_status,
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+                "X-Security-Strike": str(strike_result["strike_count"]),
+                "X-Security-Banned": "true" if strike_result["is_banned"] else "false"
+            }
+        )
+
+    # 5. Gate 4: Fast Greeting & Orientation (0 Tokens!)
+    if safety_check.is_greeting and safety_check.direct_response:
+        def greeting_stream():
+            words = safety_check.direct_response.split(" ")
+            for i, w in enumerate(words):
+                chunk = w if i == len(words) - 1 else w + " "
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            greeting_stream(),
+            media_type="text/event-stream",
+            status_code=status.HTTP_200_OK,
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream"
+            }
+        )
+
+    # 5. Gate 5: Hybrid Cache Check (Exact O(1) & Semantic >= 0.95) (0 Tokens!)
+    cached_entry = redis_cache.get(payload.query)
+    if cached_entry:
+        cached_answer = cached_entry.get("answer", "")
+        cached_citations = cached_entry.get("citations", [])
+        cached_topic = cached_entry.get("topic") or classify_topic(payload.query)
+        cache_layer = cached_entry.get("cache_layer", "exact")
+
+        def cached_stream():
+            try:
+                words = cached_answer.split(" ")
+                for i, w in enumerate(words):
+                    chunk = w if i == len(words) - 1 else w + " "
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'citations', 'citations': cached_citations}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+            finally:
+                db_log = None
+                try:
+                    db_log = SessionLocal()
+                    log = StudentQueryLog(
+                        query_text=payload.query,
+                        topic_category=cached_topic,
+                        citations_count=len(cached_citations),
+                        confidence_score=1.0 if len(cached_citations) >= 2 else 0.85,
+                        has_knowledge_gap=(len(cached_citations) == 0),
+                        device_type="desktop"
+                    )
+                    db_log.add(log)
+                    db_log.commit()
+                except Exception as log_err:
+                    print(f"[ChatLogCache] Error logging cached query: {log_err}")
+                finally:
+                    if db_log:
+                        db_log.close()
+
+        return StreamingResponse(
+            cached_stream(),
+            media_type="text/event-stream",
+            status_code=status.HTTP_200_OK,
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+                "X-Cache-Hit": "true",
+                "X-Cache-Layer": cache_layer
+            }
+        )
+
+    # 6. Concurrency Limiter: Protect system against concurrent stream exhaustion
+    acquired = STREAM_CONCURRENCY_SEMAPHORE.acquire(blocking=False)
+    if not acquired:
+        def busy_stream():
+            msg = "⚠️ El sistema se encuentra atendiendo un volumen muy alto de consultas simultáneas. Por favor reintenta en unos instantes."
+            yield f"data: {json.dumps({'type': 'token', 'content': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(
+            busy_stream(),
+            media_type="text/event-stream",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "5"}
+        )
 
     def event_generator():
         citation_count = 0
         collected_tokens = []
+        collected_citations = []
+        stream_success = False
         try:
             for event in rag_service.answer_stream(payload.query, history_dicts):
                 if event.get("type") == "token":
                     collected_tokens.append(event.get("content", ""))
                 elif event.get("type") == "citations":
-                    citation_count = len(event.get("citations", []))
+                    collected_citations = event.get("citations", [])
+                    citation_count = len(collected_citations)
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            stream_success = True
+            yield "data: [DONE]\n\n"
         except Exception as stream_err:
             print(f"[ChatStream] Streaming exception: {stream_err}")
             err_msg = f"\n\n*(Error temporal en la transmisión: {str(stream_err)})*"
             yield f"data: {json.dumps({'type': 'token', 'content': err_msg})}\n\n"
+            yield "data: [DONE]\n\n"
         finally:
+            STREAM_CONCURRENCY_SEMAPHORE.release()
+            db_log = None
             try:
                 full_text = "".join(collected_tokens).lower()
                 gap_phrases = [
@@ -92,7 +323,7 @@ def stream_chat_response(payload: ChatRequest):
                     has_gap = (citation_count == 0) or any(phrase in full_text for phrase in gap_phrases)
                     confidence = 0.25 if (citation_count == 0) else (0.45 if has_gap else (1.0 if citation_count >= 2 else 0.85))
 
-                db = SessionLocal()
+                db_log = SessionLocal()
                 log = StudentQueryLog(
                     query_text=payload.query,
                     topic_category=classify_topic(payload.query),
@@ -101,13 +332,20 @@ def stream_chat_response(payload: ChatRequest):
                     has_knowledge_gap=has_gap,
                     device_type="desktop"
                 )
-                db.add(log)
-                db.commit()
-                db.close()
+                db_log.add(log)
+                db_log.commit()
             except Exception as log_err:
                 print(f"[ChatLog] Error logging query: {log_err}")
+            finally:
+                if db_log:
+                    db_log.close()
 
-            yield "data: [DONE]\n\n"
+            # Store result in cache asynchronously in background on successful completion
+            if stream_success and collected_tokens:
+                full_answer = "".join(collected_tokens)
+                if full_answer.strip() and not full_answer.startswith("\n\n*(Error temporal"):
+                    topic_cat = classify_topic(payload.query)
+                    _submit_cache_write(payload.query, full_answer, collected_citations, topic_cat)
 
     return StreamingResponse(
         event_generator(),
@@ -115,7 +353,8 @@ def stream_chat_response(payload: ChatRequest):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Content-Type": "text/event-stream"
+            "Content-Type": "text/event-stream",
+            "X-Cache-Hit": "false"
         }
     )
 
@@ -131,11 +370,29 @@ class SessionFeedbackPayload(BaseModel):
 from app.services.email_dispatcher import email_dispatcher
 
 @router.post("/feedback")
-def submit_session_feedback(payload: SessionFeedbackPayload, db: Session = Depends(get_db)):
+def submit_session_feedback(
+    request: Request,
+    payload: SessionFeedbackPayload,
+    db: Session = Depends(get_db)
+):
     """
     Receives student feedback for a specific chat session, optionally including
     the transcript of the conversation, destined for canigraduateud@gmail.com.
+    Rate limited to max 5 feedback submissions per minute.
     """
+    client_info = extract_client_info(request)
+    is_limited, retry_after = rate_limiter.is_rate_limited(
+        endpoint_key="feedback",
+        client_key=client_info["ip"],
+        max_requests=5,
+        window_seconds=60
+    )
+    if is_limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Has superado el límite de envíos de feedback. Por favor espera {retry_after} segundos."
+        )
+
     if not payload.comments or not payload.comments.strip():
         raise HTTPException(status_code=400, detail="El comentario no puede estar vacío.")
 
@@ -143,6 +400,7 @@ def submit_session_feedback(payload: SessionFeedbackPayload, db: Session = Depen
     if payload.include_transcript and payload.messages:
         try:
             transcript_str = json.dumps(payload.messages, ensure_ascii=False)
+
         except Exception:
             transcript_str = str(payload.messages)
 

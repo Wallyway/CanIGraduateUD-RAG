@@ -250,9 +250,63 @@ export function SettingsGuardrailsModule() {
           </label>
         </div>
       </div>
+
+      {/* Security & Anti-Abuse Defense (3 Strikes / 24h Ban) Section */}
+      <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-xs space-y-5">
+        <div className="flex items-center justify-between pb-3 border-b border-stone-100">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-red-600" />
+            <div>
+              <h3 className="text-sm font-bold text-stone-900">
+                Defensa Anti-Prompting, Rate Limiting & 3 Strikes (24h)
+              </h3>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Regla estricta de protección de tokens: 3 strikes por consultas no académicas conllevan suspensión de 24 horas por IP, subred y dispositivo.
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-red-50 text-red-700 border border-red-200">
+            3 Strikes = 24h Ban
+          </span>
+        </div>
+
+        {/* Protection Explanatory Badges */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200">
+            <span className="text-[11px] font-bold text-stone-500 uppercase tracking-wider block mb-1">
+              Filtro 0 Tokens
+            </span>
+            <p className="text-xs text-stone-800 font-medium">
+              Intercepción inmediata en FastAPI sin invocar LLM ni base vectorial para consultas abusivas o prompt injections.
+            </p>
+          </div>
+          <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200">
+            <span className="text-[11px] font-bold text-stone-500 uppercase tracking-wider block mb-1">
+              Multi-Factor Client Ban
+            </span>
+            <p className="text-xs text-stone-800 font-medium">
+              Bloqueo simultáneo por IP real, Subred /24 (anti-salto de red) y UUID persistente de dispositivo.
+            </p>
+          </div>
+          <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200">
+            <span className="text-[11px] font-bold text-stone-500 uppercase tracking-wider block mb-1">
+              Rate Limit Volumétrico
+            </span>
+            <p className="text-xs text-stone-800 font-medium">
+              Ventana deslizante (Sliding Window): máx. 10 consultas/min en chat, 5 en feedback y 5 intentos en login.
+            </p>
+          </div>
+        </div>
+
+        {/* Technical Architecture Note */}
+        <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 text-xs text-amber-900 leading-relaxed">
+          <strong>Arquitectura de Red y Privacidad L2/L3:</strong> Las direcciones físicas MAC residen en la Capa 2 (Enlace de Datos) y son eliminadas por los enrutadores al atravesar Internet por protocolo TCP/IP. En su lugar, el sistema implementa la defensa equivalente web de alta fidelidad: <strong>Huella/UUID de Dispositivo en LocalStorage + Dirección IP Pública + Subred /24 + User-Agent</strong>.
+        </div>
+      </div>
     </div>
   );
 }
 
 export default SettingsGuardrailsModule;
+
 

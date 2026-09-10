@@ -55,6 +55,11 @@ def init_db():
             conn.commit()
         except Exception:
             pass
+        try:
+            conn.execute(text("ALTER TABLE security_penalty_logs ADD COLUMN mac_address VARCHAR(64)"))
+            conn.commit()
+        except Exception:
+            pass
 
     # Ensure default system settings
     db = SessionLocal()

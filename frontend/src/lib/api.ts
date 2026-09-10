@@ -2,6 +2,35 @@ import { getAdminToken } from "./storage";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export function getDeviceId(): string {
+  if (typeof window === "undefined") return "server_ssr";
+  let id = localStorage.getItem("ud_client_device_id");
+  if (!id) {
+    id = "dev_" + Math.random().toString(36).substring(2, 11) + "_" + Date.now().toString(36);
+    localStorage.setItem("ud_client_device_id", id);
+  }
+  return id;
+}
+
+export function getClientMac(): string {
+  if (typeof window === "undefined") return "00:00:00:00:00:00";
+  let mac = localStorage.getItem("ud_client_mac");
+  if (!mac) {
+    const screenData = `${window.screen?.width || 1920}x${window.screen?.height || 1080}x${window.screen?.colorDepth || 24}`;
+    const cores = navigator.hardwareConcurrency || 4;
+    let hash = 0;
+    const str = `${screenData}_${cores}_${navigator.userAgent}_${Date.now()}`;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    const hex = (Math.abs(hash).toString(16) + "abcdef0123456789").substring(0, 12);
+    mac = (hex.match(/.{1,2}/g) || ["00", "11", "22", "33", "44", "55"]).join(":").toUpperCase();
+    localStorage.setItem("ud_client_mac", mac);
+  }
+  return mac;
+}
+
 function getAuthHeaders(): HeadersInit {
   const token = getAdminToken();
   return {
@@ -21,12 +50,19 @@ export async function streamChat(
   try {
     const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Device-Id": getDeviceId(),
+        "X-MAC-Address": getClientMac(),
+      },
       body: JSON.stringify({ query, history }),
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+    const isSse = (response.headers.get("content-type") || "").includes("text/event-stream");
+
+    if (!response.ok && !isSse) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.detail || `HTTP error! status: ${response.status}`);
     }
 
     if (!response.body) {
@@ -36,6 +72,7 @@ export async function streamChat(
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+
 
     while (true) {
       const { done, value } = await reader.read();
@@ -375,7 +412,11 @@ export interface SessionFeedbackData {
 export async function sendSessionFeedback(data: SessionFeedbackData) {
   const res = await fetch(`${API_BASE}/api/v1/chat/feedback`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Device-Id": getDeviceId(),
+      "X-MAC-Address": getClientMac(),
+    },
     body: JSON.stringify(data),
   });
   if (!res.ok) {
@@ -411,6 +452,25 @@ export async function deleteFeedback(feedbackId: number) {
   if (!res.ok) throw new Error("Error al eliminar feedback");
   return res.json();
 }
+
+export async function getSecurityPenalties() {
+  const res = await fetch(`${API_BASE}/api/v1/admin/security/penalties`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error("Error al consultar penalizaciones de seguridad");
+  return res.json();
+}
+
+export async function revokeSecurityPenalty(identifier: string) {
+  const res = await fetch(`${API_BASE}/api/v1/admin/security/revoke`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ identifier }),
+  });
+  if (!res.ok) throw new Error("Error al levantar penalización");
+  return res.json();
+}
+
 
 
 

@@ -764,3 +764,59 @@ async def create_markdown_email_notice(
         "triage_summary": email_record.triage_summary,
         "target_program": email_record.target_program
     }
+
+class RevokePenaltyPayload(BaseModel):
+    identifier: str
+
+@router.get("/security/penalties")
+def get_security_penalties(
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """Returns active security strikes, 24-hour bans, and historical logs."""
+    from app.core.security_guardrails import strike_manager
+    from app.db.models import SecurityPenaltyLog
+    
+    in_memory = strike_manager.list_penalties()
+    recent_db_logs = db.query(SecurityPenaltyLog).order_by(SecurityPenaltyLog.created_at.desc()).limit(20).all()
+    
+    db_history = []
+    for log in recent_db_logs:
+        db_history.append({
+            "id": log.id,
+            "ip_address": log.ip_address,
+            "mac_address": log.mac_address,
+            "device_id": log.device_id,
+            "subnet": log.subnet,
+            "strike_count": log.strike_count,
+            "is_banned": log.is_banned,
+            "banned_until": log.banned_until.isoformat() if log.banned_until else None,
+            "last_reason": log.last_reason,
+            "last_query": log.last_query,
+            "created_at": log.created_at.isoformat() if log.created_at else None
+        })
+
+    return {
+        "active_penalties": in_memory,
+        "recent_logs": db_history,
+        "total_active_bans": sum(1 for p in in_memory if p.get("is_banned")),
+        "strike_threshold": 3,
+        "penalty_duration_hours": 24
+    }
+
+@router.post("/security/revoke")
+def revoke_security_penalty(
+    payload: RevokePenaltyPayload,
+    db: Session = Depends(get_db),
+    admin: str = Depends(get_current_admin)
+):
+    """Revokes an active penalty or ban for an IP, MAC, Subnet, or Device ID in memory and database."""
+    from app.core.security_guardrails import strike_manager
+    cleared = strike_manager.revoke_penalty(payload.identifier, db=db)
+    return {
+        "success": True,
+        "identifier": payload.identifier,
+        "cleared": cleared,
+        "message": f"Penalización para '{payload.identifier}' levantada exitosamente en memoria y base de datos."
+    }
+

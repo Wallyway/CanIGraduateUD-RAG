@@ -95,4 +95,23 @@ class SessionFeedback(Base):
     status = Column(String(50), default="RECEIVED")
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
+class SecurityPenaltyLog(Base):
+    __tablename__ = "security_penalty_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    ip_address = Column(String(64), nullable=False, index=True)
+    mac_address = Column(String(64), nullable=True, index=True)
+    device_id = Column(String(128), nullable=True, index=True)
+    subnet = Column(String(64), nullable=True, index=True)
+    user_agent = Column(String(500), nullable=True)
+    strike_count = Column(Integer, default=0)
+    is_banned = Column(Boolean, default=False, index=True)
+    banned_until = Column(DateTime, nullable=True, index=True)
+    last_reason = Column(String(500), nullable=True)
+    last_query = Column(Text, nullable=True)
+    violation_history = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 

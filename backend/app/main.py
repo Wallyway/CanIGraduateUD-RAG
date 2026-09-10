@@ -18,6 +18,15 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database tables
     logger.info("Starting CanIGraduateUD-RAG backend...")
     init_db()
+    try:
+        from app.db.session import SessionLocal
+        from app.core.security_guardrails import strike_manager
+        db_start = SessionLocal()
+        strike_manager.init_from_db(db_start)
+        db_start.close()
+        logger.info("SecurityStrikeManager successfully synchronized with persistent active bans.")
+    except Exception as e:
+        logger.warning(f"Could not load security bans on startup: {e}")
     yield
 
     # Shutdown

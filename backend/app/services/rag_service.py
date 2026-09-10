@@ -217,5 +217,10 @@ class RAGService:
         # 4. Send citations at the end of the stream
         yield {"type": "citations", "citations": citations}
 
+    def embed_query(self, query: str) -> List[float]:
+        """Generates embedding vector for a query using the configured embedding provider."""
+        embeddings = llm_adapter.get_embeddings([query])
+        return embeddings[0] if embeddings else []
+
 rag_service = RAGService()
 

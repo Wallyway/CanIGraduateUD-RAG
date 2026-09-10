@@ -19,6 +19,7 @@ from app.services.document_processor import document_processor
 from app.services.vector_store import vector_store
 from app.services.markdown_converter import markdown_converter
 from app.services.normative_auditor import normative_auditor
+from app.core.redis_cache import redis_cache
 
 router = APIRouter()
 
@@ -431,6 +432,9 @@ async def upload_document(
         db.commit()
         raise HTTPException(status_code=500, detail=f"Error al indexar el documento: {str(e)}")
 
+    # Flush cache on new document ingestion to ensure fresh answers
+    redis_cache.invalidate_all()
+
     return {
         "success": True,
         "message": f"Documento '{doc_item.title}' transformado a Markdown e indexado exitosamente.",
@@ -581,6 +585,9 @@ async def create_markdown_document(
         db.commit()
         raise HTTPException(status_code=500, detail=f"Error al indexar en base vectorial: {str(e)}")
 
+    # Flush cache on document creation
+    redis_cache.invalidate_all()
+
     return {
         "success": True,
         "message": f"Documento '{doc_item.title}' indexado exitosamente en ChromaDB.",
@@ -614,6 +621,9 @@ def deprecate_document(
         print(f"[Deprecate] Warning deleting chunks: {e}")
 
     db.commit()
+    # Invalidate cache when document is deprecated
+    redis_cache.invalidate_all()
+
     return {
         "success": True,
         "message": f"Documento '{doc.title}' marcado como DEROGADO y desindexado de ChromaDB.",
@@ -670,6 +680,8 @@ def delete_document(
     doc_title = doc.title
     db.delete(doc)
     db.commit()
+    # Invalidate cache when document is deleted
+    redis_cache.invalidate_all()
 
     return {
         "success": True,

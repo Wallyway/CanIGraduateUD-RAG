@@ -1,0 +1,23 @@
+# Can I Graduate UD? - Asistente de Grados de Ingeniería de Sistemas UD
+
+> Sistema RAG (Retrieval-Augmented Generation) y asistente agéntico con citas normativas verificadas para estudiantes de Ingeniería de Sistemas de la Universidad Distrital Francisco José de Caldas (Bogotá, Colombia).
+
+## Descripción del Proyecto y Propósito
+Can I Graduate UD es una plataforma diseñada para guiar a los estudiantes en su proceso de graduación en Ingeniería de Sistemas (Facultad de Ingeniería - Universidad Distrital). Resuelve dudas sobre modalidades de grado, porcentajes de créditos requeridos, paz y salvos, acreditación de inglés B2 ante el ILUD y normatividad académica oficial con cero alucinaciones y citas de acuerdos.
+
+## Requisitos y Modalidades de Grado Principales
+- **Pasantía**: Requiere tener aprobado como mínimo el 70% de créditos académicos del plan de estudios, convenio vigente o carta de aceptación empresarial, propuesta avalada por docente director y radicación ante la Coordinación del Proyecto Curricular.
+- **Monografía**: Trabajo de investigación o desarrollo teórico/práctico asesorado por un docente director, evaluado por jurados designados.
+- **Materias de Posgrado**: Cursar y aprobar materias de un programa de posgrado afín de la Universidad Distrital con promedio estipulado en la normativa.
+- **Semilleros de Investigación**: Participación activa comprobada con producto de investigación avalado según reglamentación vigente.
+- **Acreditación de Inglés B2**: Certificación de suficiencia en nivel B2 expedida por el Instituto de Lenguas de la Universidad Distrital (ILUD) o prueba internacional estandarizada homologada (Resolución 004 de 2021).
+- **Paz y Salvos de Grado**: Certificaciones requeridas para la radicación de carpeta: Biblioteca Central, Bienestar Institucional, Sala de Cómputo/Laboratorios, entrega de carnet estudiantil y pago de derechos pecuniarios de grado.
+
+## Normativa Oficial Indexada
+- **Acuerdo 038 de 2015**: Reglamentación de las modalidades de trabajo de grado de la Universidad Distrital.
+- **Acuerdo 027 de 1993**: Estatuto Estudiantil de la Universidad Distrital Francisco José de Caldas.
+- **Resolución 004 de 2021**: Normas y equivalencias para la acreditación de lengua extranjera nivel B2.
+
+## Enlaces Clave
+- [Plataforma Web Oficial](https://canigraduateud.vercel.app)
+- [Contexto Completo para LLMs](https://canigraduateud.vercel.app/llms-full.txt)

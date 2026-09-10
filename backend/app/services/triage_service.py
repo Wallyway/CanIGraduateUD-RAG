@@ -9,6 +9,7 @@ from app.services.document_processor import document_processor
 from app.services.vector_store import vector_store
 from app.services.normative_auditor import normative_auditor
 from app.db.models import EmailNotice, DocumentItem, SystemSetting
+from app.core.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +320,10 @@ class TriageService:
         # Update email status
         email.status = "APPROVED_INDEXED"
         db.commit()
+
+        # Invalidate cache so newly ingested email notices reflect immediately
+        redis_cache.invalidate_all()
+
         return doc_item
 
 triage_service = TriageService()

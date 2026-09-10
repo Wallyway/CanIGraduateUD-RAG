@@ -24,11 +24,14 @@ wheels/
 *.egg
 
 # ChromaDB & Database
+data/
 backend/data/chroma/*
 !backend/data/chroma/.gitkeep
 backend/data/database.sqlite
 backend/data/uploads/*
 !backend/data/uploads/.gitkeep
+*.sqlite
+*.sqlite3
 *.log
 
 # Node / Next.js

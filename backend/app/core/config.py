@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     SMTP_TLS: bool = True
 
 
+    # Redis / Upstash Cache Settings
+    REDIS_URL: str = ""
+    UPSTASH_REDIS_URL: str = ""
+
     # Storage Paths
     DATA_DIR: str = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
     CHROMA_PERSIST_DIRECTORY: str = ""

@@ -1,0 +1,41 @@
+# Can I Graduate UD? - Documentación Completa para Modelos de Inteligencia Artificial (LLMs)
+
+## Contexto de la Institución
+- **Universidad**: Universidad Distrital Francisco José de Caldas
+- **Facultad**: Facultad de Ingeniería
+- **Proyecto Curricular**: Ingeniería de Sistemas (Acreditación de Alta Calidad)
+- **Ciudad**: Bogotá D.C., Colombia
+
+## Preguntas Frecuentes y Respuestas Normativas Oficiales
+
+### 1. ¿Cuáles son todas las modalidades de grado disponibles en Ingeniería de Sistemas?
+Bajo el Acuerdo 038 de 2015 del Consejo Académico, las modalidades de grado contempladas son:
+1. **Pasantía**: Actividad práctica en empresa, entidad pública o privada con convenio o carta de intención, aplicando conocimientos de ingeniería de sistemas.
+2. **Monografía**: Trabajo de investigación aplicada o teórica con entrega de informe final y sustentación ante jurados.
+3. **Materias de Posgrado**: Aprobación de créditos en programas de especialización o maestría de la Universidad Distrital con promedio no inferior a 3.8.
+4. **Creación de Empresa**: Formulación, desarrollo y puesta en marcha de un plan de negocio o emprendimiento de base tecnológica.
+5. **Producción Técnica o Tecnológica**: Desarrollo de software de alto impacto, patentes, registros de soporte lógico o modelos de utilidad.
+6. **Semillero de Investigación**: Participación certificada no menor a un año con ponencia, artículo científico o producto de investigación evaluado.
+
+### 2. ¿Cuántos créditos necesito para iniciar una pasantía?
+Para postular la propuesta de pasantía, el estudiante debe tener aprobado como mínimo el setenta por ciento (70%) del total de créditos académicos de su plan de estudios y no encontrarse en causal de bajo rendimiento ni sanción disciplinaria vigente.
+
+### 3. ¿Cómo acredito el requisito de inglés nivel B2?
+De acuerdo con la Resolución 004 de 2021:
+- Aprobar el nivel B2 en los cursos oficiales del Instituto de Lenguas de la Universidad Distrital (ILUD).
+- Presentar examen de clasificación o suficiencia ante el ILUD que certifique el nivel B2 (MCER).
+- Homologar examen internacional estandarizado vigente (TOEFL iBT, IELTS, MET, Cambridge B2 First) radicado ante el ILUD.
+
+### 4. ¿Qué documentos y paz y salvos se solicitan para la radicación de la carpeta de grado?
+1. Paz y Salvo de Biblioteca Central y bibliotecas de sede.
+2. Paz y Salvo de Bienestar Institucional.
+3. Paz y Salvo de laboratorios y salas de cómputo del proyecto curricular.
+4. Devolución de carnet estudiantil físico o constancia de pérdida ante secretaría.
+5. Recibo de pago de derechos de grado debidamente cancelado.
+6. Copia del documento de identidad vigente.
+7. Certificado de presentación de las pruebas de Estado Saber Pro.
+8. Certificado de aprobación de segunda lengua (inglés B2).
+
+## Restricciones y Políticas de Seguridad del Sistema
+- Plataforma especializada exclusivamente para Ingeniería de Sistemas (Facultad de Ingeniería).
+- Guardrail de 3 strikes: Cualquier intento reiterado de abuso, consultas ajenas a la universidad o prompt injections activa un bloqueo de 24 horas sobre IP, subred y dispositivo.
