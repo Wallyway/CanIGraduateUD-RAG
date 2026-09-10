@@ -79,7 +79,12 @@ class Settings(BaseSettings):
     QUEUE_CAPACITY: int = 100
 
     # CORS
-    BACKEND_CORS_ORIGINS: Union[List[str], str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    BACKEND_CORS_ORIGINS: Union[List[str], str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://canigraduateud.site",
+        "https://www.canigraduateud.site",
+    ]
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod

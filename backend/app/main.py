@@ -44,6 +44,7 @@ origins = settings.BACKEND_CORS_ORIGINS if isinstance(settings.BACKEND_CORS_ORIG
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if "*" in origins else origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

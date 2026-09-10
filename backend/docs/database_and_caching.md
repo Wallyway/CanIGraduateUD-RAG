@@ -175,6 +175,7 @@ create_engine(
 The migration utility (`backend/scripts/migrate_sqlite_to_postgres.py`) transfers application state, documents, and historical logs from SQLite to PostgreSQL with zero data loss.
 
 ### 3.1 Migration Sequence & Foreign Key Constraints
+
 To prevent foreign key constraint violations during bulk data loading, tables are inserted in strict dependency order:
 $$\text{TABLE\_ORDER} = [ \texttt{system\_settings} \rightarrow \texttt{email\_notices} \rightarrow \texttt{document\_items} \rightarrow \texttt{student\_query\_logs} \rightarrow \texttt{session\_feedbacks} \rightarrow \texttt{security\_penalty\_logs} ]$$
 
@@ -182,12 +183,15 @@ When truncating before migration (`--clean`), tables are emptied in reverse orde
 $$\texttt{TRUNCATE TABLE "security\_penalty\_logs", "session\_feedbacks", "student\_query\_logs", "document\_items", "email\_notices", "system\_settings" CASCADE;}$$
 
 ### 3.2 Data Type Sanitization & Coercion
+
 Raw SQLite rows lack strict typing. `sanitize_row_for_target()` transforms raw fields before PostgreSQL insertion:
+
 - **Booleans**: Converts SQLite integers (`0`, `1`) and text strings (`"true"`, `"false"`, `"t"`, `"1"`) to native Python `bool`.
 - **DateTimes**: Converts ISO timestamp strings (`"2026-09-10T18:30:00.000000"`, `"2026-09-10 18:30:00"`) into native `datetime` objects.
 - **Field Whitelisting**: Drops obsolete columns present in older SQLite files that do not exist on the target schema.
 
 ### 3.3 Conflict Handling & Sequence Synchronization
+
 - **Upsert / Conflict Avoidance**: For `system_settings`, uses `on_conflict_do_update` on the `key` primary key. For log tables, uses `on_conflict_do_nothing` on the `id` primary key.
 - **PostgreSQL Sequence Synchronization**:
   After transferring records with explicit `id` values, the PostgreSQL serial sequence is synchronized to prevent collisions on subsequent `INSERT` operations:
@@ -196,6 +200,7 @@ Raw SQLite rows lack strict typing. `sanitize_row_for_target()` transforms raw f
   ```
 
 ### 3.4 CLI Commands
+
 ```bash
 # Dry run: Inspect source row counts and validate target schema
 python backend/scripts/migrate_sqlite_to_postgres.py --dry-run
@@ -219,9 +224,9 @@ flowchart TD
     Query["Incoming Query: '¿Cuáles son los requisitos de pasantía?'"]
     Norm["normalize_text(): 'requisitos de pasantia'"]
     Hash["compute_query_hash(): SHA-256"]
-    
+
     Query --> Norm --> Hash
-    
+
     subgraph Layer1 ["Layer 1: Exact Match (O(1), < 1ms)"]
         CheckRAMExact{"Exact Hash in RAM Cache?"}
         CheckRedisExact{"Exact Hash in Redis?"}
@@ -244,31 +249,36 @@ flowchart TD
 ```
 
 ### 4.1 Layer 1 — Exact Match (SHA-256 on Normalized Spanish)
+
 - **Normalization (`normalize_text`)**:
   1. Decomposes characters via Unicode NFKD (removes accents, tildes, diacritics).
   2. Strips punctuation (inverted question/exclamation marks `¿`, `¡`, quotes, dashes).
   3. Collapses whitespace and converts to lowercase.
-  *Example*: `"¿Requisitos para PASANTÍA?!"` and `"requisitos para pasantia"` produce the exact same SHA-256 hash.
+     _Example_: `"¿Requisitos para PASANTÍA?!"` and `"requisitos para pasantia"` produce the exact same SHA-256 hash.
 - **Lookup Cost**: $O(1)$, $< 1\text{ ms}$ latency, $0$ tokens consumed.
 
 ### 4.2 Layer 2 — Semantic Match (Cosine Similarity $\ge 0.95$)
+
 - **Embedding Generation**: 384-dimensional dense vectors generated via `rag_service.embed_query()` or `llm_adapter.get_embeddings()`, backed by a thread-safe LRU cache (`_cached_embedding_tuple(maxsize=1024)`).
 - **Matching Metric**:
   $$\text{Cosine Similarity}(u, v) = \frac{u \cdot v}{\|u\|_2 \|v\|_2} \ge 0.95$$
 - **Semantic Index in Redis**: Stored in a Redis hash (`canigraduate:cache:semantic_index`) mapping query hashes to `{query, embedding, expires_at}`.
 
 ### 4.3 Thread-Safe In-Memory RAM Fallback (`InMemoryCache`)
+
 When Upstash Redis is unconfigured or unreachable:
+
 - The system gracefully degrades to an internal in-memory cache protected by `threading.RLock`.
 - Features TTL expiration, capacity management (`max_entries=2000`), and LRU eviction.
 - Operates transparently without throwing errors or halting chat requests.
 
 ### 4.4 Invalidation Triggers & Asynchronous Writes
+
 - **Asynchronous Storage**: Responses are stored via a dedicated thread pool (`_CACHE_WRITE_EXECUTOR`, max 4 workers) to avoid adding latency to the SSE stream.
 - **Cache Invalidation**:
-  * On manual document upload or deletion: calls `redis_cache.invalidate_all()`.
-  * On derogation resolution: clears affected entries.
-  * Invalidation purges both local RAM entries and Redis keys via non-blocking `SCAN`.
+  - On manual document upload or deletion: calls `redis_cache.invalidate_all()`.
+  - On derogation resolution: clears affected entries.
+  - Invalidation purges both local RAM entries and Redis keys via non-blocking `SCAN`.
 
 ---
 
@@ -277,6 +287,7 @@ When Upstash Redis is unconfigured or unreachable:
 Normative regulations and official announcements are stored in **Neon PostgreSQL** using the native **`pgvector` extension** (`app/services/vector_store.py` and `app/db/models.py`).
 
 ### 5.1 Schema & HNSW Indexing
+
 - **Table**: `document_chunks`
 - **Embedding Dimensions**: `VECTOR(1536)` matching OpenRouter / OpenAI `text-embedding-3-small`.
 - **HNSW Index**:
@@ -289,6 +300,7 @@ Normative regulations and official announcements are stored in **Neon PostgreSQL
 - **Sub-millisecond latency**: Nearest neighbor retrieval evaluates in 0.5 – 2.0 ms directly on Neon's hardware-accelerated SIMD engine.
 
 ### 5.2 100% Stateless Backend Benefits
+
 1. **Zero Local Filesystem Dependency**:
    Unlike ChromaDB (which required local files at `data/chroma/`), all vectors, chunks, and metadata live in the cloud database. The backend can restart, scale, or deploy to ephemeral containers (Render, Koyeb, Docker) with **zero risk of data loss**.
 2. **70% RAM Reduction**:
@@ -297,7 +309,9 @@ Normative regulations and official announcements are stored in **Neon PostgreSQL
    `DocumentChunk` declares `ForeignKey("document_items.id", ondelete="CASCADE")`. When an admin deletes a document, all related chunks and vectors are purged in the exact same SQL transaction.
 
 ### 5.3 Derogation Filtering & Article Purging
+
 Academic regulations frequently update or repeal specific articles of previous accords (e.g. Accord 004 repealing Article 12 of Accord 038):
+
 1. **Granular Article Derogation (`delete_chunks_by_article`)**:
    Purges only chunks matching specific repealed articles using regex boundaries:
    ```python
