@@ -145,6 +145,14 @@ class Settings(BaseSettings):
             clean_url = self.DATABASE_URL.strip()
             self.DATABASE_URL = "postgresql://" + clean_url[11:]
         
+        if not os.path.isabs(self.DATA_DIR):
+            backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            candidate = os.path.join(backend_dir, self.DATA_DIR)
+            if os.path.exists(candidate):
+                self.DATA_DIR = candidate
+            else:
+                self.DATA_DIR = os.path.abspath(self.DATA_DIR)
+
         # Ensure directories exist
         os.makedirs(self.DATA_DIR, exist_ok=True)
         os.makedirs(self.CHROMA_PERSIST_DIRECTORY, exist_ok=True)

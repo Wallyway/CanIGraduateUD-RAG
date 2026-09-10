@@ -38,10 +38,35 @@ class DeprecatePayload(BaseModel):
     reason: Optional[str] = "Derogado por nueva normativa"
     superseded_by_title: Optional[str] = None
 
+def find_upload_file(filename: Optional[str]) -> Optional[str]:
+    if not filename:
+        return None
+    clean_name = os.path.basename(filename)
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    candidates = [
+        filename,
+        os.path.join(settings.DATA_DIR, "uploads", clean_name),
+        os.path.join(settings.DATA_DIR, clean_name),
+        os.path.join(backend_dir, "data", "uploads", clean_name),
+        os.path.join(backend_dir, "data", clean_name),
+        os.path.join("/app", "data", "uploads", clean_name),
+    ]
+    for cand in candidates:
+        if cand and os.path.exists(cand) and not os.path.isdir(cand):
+            return os.path.abspath(cand)
+    return None
+
 def render_markdown_document_html(doc: DocumentItem, markdown_text: str) -> str:
-    from markdown_it import MarkdownIt
-    md = MarkdownIt("commonmark", {"breaks": True, "html": False})
-    rendered_body = md.render(markdown_text)
+    rendered_body = ""
+    try:
+        from markdown_it import MarkdownIt
+        md = MarkdownIt("commonmark", {"breaks": True, "html": False})
+        rendered_body = md.render(markdown_text)
+    except Exception as e:
+        logger.warning(f"Could not render markdown via markdown_it: {e}")
+        import html
+        escaped = html.escape(markdown_text).replace("\n", "<br>")
+        rendered_body = f"<div style='line-height: 1.8; font-size: 15px;'>{escaped}</div>"
 
     status_color = "#059669" if doc.validity_status == "VIGENTE" else ("#d97706" if doc.validity_status == "MODIFICADO" else "#dc2626")
     status_bg = "#ecfdf5" if doc.validity_status == "VIGENTE" else ("#fffbeb" if doc.validity_status == "MODIFICADO" else "#fef2f2")
@@ -711,75 +736,86 @@ def view_document_pdf(
     Public endpoint for opening / previewing the original PDF or source document in a new browser tab.
     Used by student chat citations and admin document inspection.
     """
-    doc = db.query(DocumentItem).filter(DocumentItem.id == document_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    try:
+        doc = db.query(DocumentItem).filter(DocumentItem.id == document_id).first()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Documento no encontrado")
 
-    # 1. Resolve physical file path if any
-    real_path = doc.file_path
-    if (not real_path or not os.path.exists(real_path)) and doc.filename:
-        possible_path = os.path.join(settings.DATA_DIR, "uploads", doc.filename)
-        if os.path.exists(possible_path):
-            real_path = possible_path
+        # 1. Resolve physical file path if any
+        real_path = None
+        for candidate_name in [doc.file_path, doc.filename, doc.scan_image_path]:
+            resolved = find_upload_file(candidate_name)
+            if resolved:
+                real_path = resolved
+                break
 
-    # Check if doc has scan_image_path that is a PDF
-    if (not real_path or not os.path.exists(real_path) or not real_path.lower().endswith(".pdf")) and doc.scan_image_path:
-        scan_cand = doc.scan_image_path
-        if not os.path.exists(scan_cand):
-            scan_cand = os.path.join(settings.DATA_DIR, "uploads", os.path.basename(scan_cand))
-        if os.path.exists(scan_cand) and scan_cand.lower().endswith(".pdf"):
-            real_path = scan_cand
-
-    # Check if doc is linked to an EmailNotice that has an attached PDF in uploads
-    if (not real_path or not os.path.exists(real_path) or not real_path.lower().endswith(".pdf")) and doc.email_id:
-        email = db.query(EmailNotice).filter(EmailNotice.id == doc.email_id).first()
-        if email and email.attachment_paths:
-            try:
-                attachments = json.loads(email.attachment_paths) if email.attachment_paths.startswith("[") else [email.attachment_paths]
-                for att in attachments:
-                    if att.lower().endswith(".pdf"):
-                        att_path = os.path.join(settings.DATA_DIR, "uploads", att)
-                        if os.path.exists(att_path):
-                            real_path = att_path
+        # Check if doc is linked to an EmailNotice that has an attached PDF in uploads
+        if (not real_path or not real_path.lower().endswith(".pdf")) and doc.email_id:
+            email = db.query(EmailNotice).filter(EmailNotice.id == doc.email_id).first()
+            if email and email.attachment_paths:
+                try:
+                    attachments = json.loads(email.attachment_paths) if email.attachment_paths.startswith("[") else [email.attachment_paths]
+                    for att in attachments:
+                        resolved = find_upload_file(att)
+                        if resolved and resolved.lower().endswith(".pdf"):
+                            real_path = resolved
                             break
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
-    # If physical PDF exists on disk, serve as native application/pdf
-    if real_path and os.path.exists(real_path) and real_path.lower().endswith(".pdf"):
-        download_filename = os.path.basename(real_path)
-        return FileResponse(
-            real_path,
-            media_type="application/pdf",
-            filename=download_filename,
-            headers={"Content-Disposition": f"inline; filename=\"{download_filename}\""}
-        )
+        # If physical PDF exists on disk, serve as native application/pdf
+        if real_path and os.path.exists(real_path) and real_path.lower().endswith(".pdf"):
+            download_filename = os.path.basename(real_path)
+            return FileResponse(
+                real_path,
+                media_type="application/pdf",
+                filename=download_filename,
+                headers={"Content-Disposition": f"inline; filename=\"{download_filename}\""}
+            )
 
-    # 2. Extract markdown / text content from doc, file, or paired email
-    markdown_text = doc.markdown_content
-    if not markdown_text and real_path and os.path.exists(real_path):
-        try:
-            with open(real_path, "r", encoding="utf-8") as f:
-                markdown_text = f.read()
-        except Exception:
-            pass
-
-    if not markdown_text and doc.email_id:
-        email = db.query(EmailNotice).filter(EmailNotice.id == doc.email_id).first()
-        if email and email.body_text:
-            markdown_text = email.body_text
+        # 2. Extract markdown / text content from doc, file, or paired email
+        markdown_text = doc.markdown_content
+        if not markdown_text and real_path and os.path.exists(real_path):
             try:
-                doc.markdown_content = email.body_text
-                db.commit()
+                with open(real_path, "r", encoding="utf-8") as f:
+                    markdown_text = f.read()
             except Exception:
                 pass
 
-    # 3. Serve as beautifully formatted official HTML document
-    if markdown_text and markdown_text.strip():
-        html_page = render_markdown_document_html(doc, markdown_text)
-        return HTMLResponse(content=html_page, media_type="text/html; charset=utf-8")
+        if not markdown_text and doc.email_id:
+            email = db.query(EmailNotice).filter(EmailNotice.id == doc.email_id).first()
+            if email and email.body_text:
+                markdown_text = email.body_text
+                try:
+                    doc.markdown_content = email.body_text
+                    db.commit()
+                except Exception:
+                    pass
 
-    raise HTTPException(status_code=404, detail="El archivo fuente no está disponible en el servidor.")
+        # Fallback: Assemble text from DocumentChunks in database if markdown is empty
+        if not markdown_text:
+            try:
+                from app.db.models import DocumentChunk
+                chunks = db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).order_by(DocumentChunk.chunk_index).all()
+                if chunks:
+                    header = f"# {doc.title}\n\n"
+                    if doc.resolution_number:
+                        header += f"**Normativa:** {doc.resolution_number}\n\n"
+                    markdown_text = header + "\n\n".join(c.content for c in chunks if c.content)
+            except Exception as e:
+                logger.warning(f"Could not assemble chunks for doc {document_id}: {e}")
+
+        # 3. Serve as beautifully formatted official HTML document
+        if markdown_text and markdown_text.strip():
+            html_page = render_markdown_document_html(doc, markdown_text)
+            return HTMLResponse(content=html_page, media_type="text/html; charset=utf-8")
+
+        raise HTTPException(status_code=404, detail="El archivo fuente no está disponible en el servidor.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving document {document_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al recuperar el documento.")
 
 @router.get("/{document_id}/scan")
 def view_document_scan(
@@ -794,13 +830,9 @@ def view_document_scan(
     if not doc or not doc.scan_image_path:
         raise HTTPException(status_code=404, detail="El documento no tiene una imagen o escaneo adjunto.")
 
-    scan_path = doc.scan_image_path
-    if not os.path.exists(scan_path):
-        possible_path = os.path.join(settings.DATA_DIR, "uploads", os.path.basename(scan_path))
-        if os.path.exists(possible_path):
-            scan_path = possible_path
-        else:
-            raise HTTPException(status_code=404, detail="El archivo de escaneo no se encuentra en el servidor.")
+    scan_path = find_upload_file(doc.scan_image_path)
+    if not scan_path:
+        raise HTTPException(status_code=404, detail="El archivo de escaneo no se encuentra en el servidor.")
 
     ext = os.path.splitext(scan_path)[1].lower()
     media_types = {
