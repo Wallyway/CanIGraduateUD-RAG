@@ -73,34 +73,34 @@ def _is_repetition_loop(accumulated_text: str, min_phrase_len: int = 35, max_occ
     """
     Detects if the LLM output has entered a degenerative repetition trap.
     Checks for:
-    1. Sentences of >= 25 characters appearing >= 3 times.
-    2. The recent tail (>= 35 characters) appearing >= 3 times in the entire text.
-    3. Cyclical repeated suffixes (consecutive identical segments of length >= 35).
+    1. Consecutive identical sentences (>= 3 times in a row).
+    2. Consecutive identical substring blocks (>= 3 cycles in a row).
+    Prevents false positives on natural legal enumerations that share introductory phrases.
     """
     if len(accumulated_text) < 140:
         return False
 
     import re
-    sentences = [s.strip() for s in re.split(r"[\n\.\?!]", accumulated_text) if len(s.strip()) >= 25]
+    # Check 1: Consecutive identical sentences (>= 3 times in a row)
+    sentences = [s.strip().lower() for s in re.split(r"[\n\.\?!]", accumulated_text) if len(s.strip()) >= 20]
     if len(sentences) >= 3:
-        counts = {}
-        for s in sentences:
-            norm = " ".join(s.split()).lower()
-            counts[norm] = counts.get(norm, 0) + 1
-            if counts[norm] >= max_occurrences:
-                return True
+        consecutive = 1
+        for i in range(1, len(sentences)):
+            if sentences[i] == sentences[i - 1]:
+                consecutive += 1
+                if consecutive >= 3:
+                    return True
+            else:
+                consecutive = 1
 
-    tail = accumulated_text[-min_phrase_len:].strip()
-    if len(tail) >= min_phrase_len:
-        if accumulated_text.count(tail) >= max_occurrences:
-            return True
-
-    recent_window = accumulated_text[-400:]
-    n = len(recent_window)
-    for k in range(35, min(160, n // 2)):
-        suffix = recent_window[-k:]
-        prev_k = recent_window[-2 * k : -k]
-        if suffix == prev_k:
+    # Check 2: Consecutive identical substring blocks (>= 3 cycles in a row)
+    recent = accumulated_text[-600:]
+    n = len(recent)
+    for k in range(25, min(150, n // 3)):
+        c1 = recent[-k:]
+        c2 = recent[-2 * k : -k]
+        c3 = recent[-3 * k : -2 * k]
+        if c1 == c2 == c3:
             return True
 
     return False
@@ -224,6 +224,7 @@ class LLMAdapter:
                             logger.warning(
                                 f"[LLMAdapter] Repetition loop trap detected for model '{self.model_name}'. Safely breaking stream."
                             )
+                            yield "\n\n*(Generación interrumpida por repetición anómala del modelo)*"
                             return
                         tokens_emitted += 1
                         yield delta

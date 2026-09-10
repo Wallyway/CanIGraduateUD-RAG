@@ -497,6 +497,8 @@ def stream_chat_response(
                     "*(error temporal durante la generacion",
                     "*(error temporal en la transmisión",
                     "*(error temporal en la transmision",
+                    "*(generación interrumpida por repetición",
+                    "*(generacion interrumpida por repeticion",
                 ]
                 has_system_marker = any(
                     marker in token.lower()

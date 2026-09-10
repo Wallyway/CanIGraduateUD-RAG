@@ -459,7 +459,9 @@ def test_concurrent_threads_load_safety():
         try:
             req = _make_mock_request(client_ip=f"10.0.1.{thread_id}")
             payload = ChatRequest(query=f"Pregunta sobre monografía hilo {thread_id}", history=[])
-            with patch("app.api.v1.chat.rag_service.answer_stream", side_effect=mock_answer):
+            with patch("app.api.v1.chat.rag_service.answer_stream", side_effect=mock_answer), \
+                 patch("app.api.v1.chat.redis_cache.get", return_value=None), \
+                 patch("app.api.v1.chat._submit_cache_write"):
                 resp = stream_chat_response(request=req, payload=payload, db=MagicMock())
                 assert resp.status_code == 200
                 events = _consume_response_body(resp)
