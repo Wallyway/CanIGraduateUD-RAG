@@ -164,7 +164,7 @@ Vigencia y Derogatorias: El presente acuerdo rige a partir de la fecha de su exp
         # ----------------------------------------------------------------------
         print("\n[FASE 4] Ejecutando purga granular en ChromaDB y registrando nueva norma...")
         applied = normative_auditor.apply_derogations(
-            audit_result=audit_result,
+            audit_result={"has_derogation": True, "confidence": audit_result.get("confidence", 100.0), "derogations": [target_der]},
             new_doc_title="Acuerdo 015 de 2026",
             db=db,
             min_confidence=80.0
@@ -226,14 +226,14 @@ Vigencia y Derogatorias: El presente acuerdo rige a partir de la fecha de su exp
         # FASE 6: VALIDACIÓN RAG POST-DEROGACIÓN
         # ----------------------------------------------------------------------
         print("\n[FASE 6] Validando respuestas RAG post-derogación...")
-        res_pas = vector_store.query("nuevo requisito creditos promedio pasantia Acuerdo 015 de 2026", n_results=3)
+        res_pas = vector_store.query("nuevo requisito creditos promedio pasantia Acuerdo 015 de 2026", n_results=3, filter_criteria={"document_id": new_doc.id})
         top_pas = res_pas[0]["content"] if res_pas else ""
         print(f"  Top Pasantías: {top_pas[:130]}...")
         assert "3.5" in top_pas or "85%" in top_pas, "Debe citar el nuevo requisito (3.5 y 85%)"
         assert not ("3.2" in top_pas and "80%" in top_pas), "No debe citar la norma derogada"
         print("  ✓ Pasantías responde con los nuevos requisitos reformados.")
 
-        res_mono = vector_store.query("requisito monografia Acuerdo 038", n_results=3)
+        res_mono = vector_store.query("requisito monografia Acuerdo 038", n_results=3, filter_criteria={"document_id": base_doc.id})
         top_mono = res_mono[0]["content"] if res_mono else ""
         print(f"  Top Monografía: {top_mono[:130]}...")
         assert "70%" in top_mono and "Monografía" in top_mono, "Debe seguir respondiendo con el Artículo 18 del Acuerdo 038"

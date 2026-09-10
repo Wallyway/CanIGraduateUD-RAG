@@ -11,7 +11,7 @@ Operating guide, architecture invariants, and coding standards for AI agents mod
 | **Relational DB** | PostgreSQL 16 (production) | SQLAlchemy 2.0+, psycopg2-binary 2.9.9, SQLite dev fallback |
 | **Connection Pool**| SQLAlchemy `QueuePool` | `size=30`, `overflow=50`, `recycle=1800s`, `pre_ping=True`, `timeout=30s` |
 | **Query Cache** | Upstash Redis + RAM Fallback | Layer 1 exact SHA-256 + Layer 2 semantic cosine similarity >= 0.95 |
-| **Vector Store** | ChromaDB 0.5+ | Local persistence at `data/chroma/`, collection `ud_sistemas_regulations` |
+| **Vector Store** | Neon `pgvector` (HNSW) | 100% Stateless in PostgreSQL `document_chunks` (1536-d, cosine ops), SQLite fallback |
 | **LLM Provider** | OpenRouter Multi-Model | Primary `llama-3.1-8b`, Fallbacks `llama-3.3-70b` & `gemini-2.0-flash` |
 | **Resilience** | Exponential Backoff & Loops | 3 retries (`1.5^attempt`), transient 429/50x retry, repetition detector |
 | **Virtual Queue** | FIFO `VirtualQueueManager` | `STREAM_CONCURRENCY_SEMAPHORE` (150 slots), queue (100 cap, 15s wait) |
@@ -22,7 +22,7 @@ Operating guide, architecture invariants, and coding standards for AI agents mod
 | Directory | Layer Responsibility | Key Files |
 |---|---|---|
 | `app/core/` | Cross-cutting infrastructure, configuration & security | `config.py`, `redis_cache.py`, `security_guardrails.py`, `virtual_queue.py` |
-| `app/db/` | Database persistence, schema models & connection factory | `models.py` (6 tables), `session.py` (QueuePool & init_db) |
+| `app/db/` | Database persistence, schema models & connection factory | `models.py` (7 tables), `session.py` (QueuePool & init_db) |
 | `app/api/` | HTTP & SSE presentation layer, authentication & routes | `deps.py`, `v1/chat.py`, `v1/admin.py`, `v1/documents.py`, `v1/webhooks.py` |
 | `app/services/` | Business logic, RAG pipeline, LLM & vector operations | `rag_service.py`, `llm_adapter.py`, `vector_store.py`, `document_processor.py` |
 | `scripts/` | Database migration and maintenance utilities | `migrate_sqlite_to_postgres.py` |
@@ -115,7 +115,7 @@ Before touching LLM tokens or vector embeddings, all incoming queries MUST trave
 
 ---
 
-## 7. Testing Standard (121 Tests)
+## 7. Testing Standard (131 Tests)
 | Test Module | Tests | Verified Functional Scope |
 |---|---|---|
 | `test_redis_cache.py` | 34 | Dual-layer cache, SHA-256 exact match, semantic cosine, RAM fallback, TTL |
@@ -125,9 +125,10 @@ Before touching LLM tokens or vector embeddings, all incoming queries MUST trave
 | `test_concurrency_and_keepalive.py`| 11 | Semaphore 150 limit, keepalive `: ping`, unconditional permit release |
 | `test_virtual_queue.py` | 10 | FIFO queue order, capacity saturation (503), cascading ticket wake |
 | `test_pdf_deduplication.py` | 6 | Bold OCR deduplication, Spanish diacritics, citation deduplication |
+| `test_pgvector_store.py` | 5 | HNSW cosine similarity, VectorType, filtering, cascade delete |
 | `e2e/test_derogation_e2e.py` | 1 | Granular article and total document derogation lifecycle |
 
-All 121 tests MUST pass: `backend/.venv/bin/pytest backend/tests -q`.
+All 131 tests MUST pass: `backend/.venv/bin/pytest backend/tests -q`.
 
 ---
 

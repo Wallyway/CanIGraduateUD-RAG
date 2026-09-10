@@ -43,6 +43,10 @@ def reindex_all():
                 if official_meta.get("effective_date") and not doc.effective_date:
                     doc.effective_date = official_meta["effective_date"]
 
+            elif doc.markdown_content and doc.markdown_content.strip():
+                logger.info(f"Using stored markdown_content for document ID {doc.id} ({doc.title})")
+                raw_text = doc.markdown_content
+
             elif doc.source_type == "EMAIL_BODY" and doc.email_id:
                 email = db.query(EmailNotice).filter(EmailNotice.id == doc.email_id).first()
                 if email and email.body_text:

@@ -1,6 +1,70 @@
+import json
+from typing import List, Optional, Any
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, Text, Float, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, Text, Float, DateTime, ForeignKey, Index
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.types import TypeDecorator
+
+try:
+    from pgvector.sqlalchemy import Vector as PGVector
+    PGVECTOR_AVAILABLE = True
+except ImportError:
+    PGVector = None
+    PGVECTOR_AVAILABLE = False
+
+
+class VectorType(TypeDecorator):
+    """
+    Platform-independent vector type that uses native PostgreSQL pgvector Vector(dim)
+    when connected to PostgreSQL, and serializes to JSON Text when on SQLite or other dialects.
+    """
+    impl = Text
+    cache_ok = True
+
+    def __init__(self, dim: int = 1536, *args, **kwargs):
+        self.dim = dim
+        super().__init__(*args, **kwargs)
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql" and PGVECTOR_AVAILABLE and PGVector is not None:
+            return dialect.type_descriptor(PGVector(self.dim))
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value: Any, dialect) -> Any:
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            if PGVECTOR_AVAILABLE and PGVector is not None:
+                return value
+            if isinstance(value, (list, tuple)):
+                return "[" + ",".join(str(float(x)) for x in value) + "]"
+            return str(value)
+        if isinstance(value, (list, tuple)):
+            return json.dumps([float(x) for x in value])
+        return str(value)
+
+    def process_result_value(self, value: Any, dialect) -> Optional[List[float]]:
+        if value is None:
+            return None
+        if hasattr(value, "tolist"):
+            return value.tolist()
+        if isinstance(value, (list, tuple)):
+            return [float(x) for x in value]
+        if isinstance(value, str):
+            clean = value.strip()
+            if clean.startswith("[") and clean.endswith("]"):
+                clean = clean[1:-1].strip()
+                if not clean:
+                    return []
+                return [float(x.strip()) for x in clean.split(",") if x.strip()]
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [float(x) for x in parsed]
+            except Exception:
+                pass
+        return None
+
 
 Base = declarative_base()
 
@@ -67,6 +131,7 @@ class DocumentItem(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     email = relationship("EmailNotice", back_populates="documents")
+    chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
 class StudentQueryLog(Base):
     __tablename__ = "student_query_logs"
@@ -112,6 +177,23 @@ class SecurityPenaltyLog(Base):
     violation_history = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    chunk_id = Column(String(255), unique=True, index=True, nullable=False)
+    document_id = Column(Integer, ForeignKey("document_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_index = Column(Integer, default=0)
+    article = Column(String(100), nullable=True, index=True)
+    content = Column(Text, nullable=False)
+    extra_metadata = Column(Text, nullable=True)  # JSON-encoded metadata dict
+    embedding = Column(VectorType(1536), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    document = relationship("DocumentItem", back_populates="chunks")
+
 
 
 

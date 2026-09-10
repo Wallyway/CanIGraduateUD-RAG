@@ -94,7 +94,30 @@ def init_db(target_engine: Optional[Engine] = None):
     Default system settings are ensured.
     """
     curr_engine = target_engine or engine
+
+    # PostgreSQL: Enable pgvector extension before table creation
+    if curr_engine.dialect.name == "postgresql":
+        try:
+            with curr_engine.connect() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                conn.commit()
+        except Exception:
+            pass
+
     Base.metadata.create_all(bind=curr_engine)
+
+    # PostgreSQL: Ensure HNSW cosine similarity index exists on document_chunks
+    if curr_engine.dialect.name == "postgresql":
+        try:
+            with curr_engine.connect() as conn:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_hnsw "
+                    "ON document_chunks USING hnsw (embedding vector_cosine_ops) "
+                    "WITH (m = 16, ef_construction = 64);"
+                ))
+                conn.commit()
+        except Exception:
+            pass
 
     # Dialect-specific migrations ONLY for SQLite legacy databases
     if curr_engine.dialect.name == "sqlite":

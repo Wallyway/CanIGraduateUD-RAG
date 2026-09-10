@@ -397,8 +397,8 @@ class LLMAdapter:
         """Generates embeddings for vector store."""
         api_key = settings.OPENROUTER_API_KEY if self.provider == "openrouter" else settings.OPENAI_API_KEY
         if not api_key or "your-" in api_key or "dummy" in api_key:
-            # Deterministic hash-based 384-dimensional embedding for testing/development
-            return [self._pseudo_embedding(t, 384) for t in texts]
+            # Deterministic hash-based 1536-dimensional embedding for testing/development
+            return [self._pseudo_embedding(t, 1536) for t in texts]
 
         try:
             # If using OpenRouter or OpenAI
@@ -410,9 +410,9 @@ class LLMAdapter:
             return [data.embedding for data in response.data]
         except Exception as e:
             logger.warning(f"Failed to fetch remote embeddings ({e}), using local fallback embedding.")
-            return [self._pseudo_embedding(t, 384) for t in texts]
+            return [self._pseudo_embedding(t, 1536) for t in texts]
 
-    def _pseudo_embedding(self, text: str, dim: int = 384) -> List[float]:
+    def _pseudo_embedding(self, text: str, dim: int = 1536) -> List[float]:
         import hashlib
         import math
         import re
