@@ -135,7 +135,8 @@ class RAGService:
     def answer_stream(
         self,
         query: str,
-        conversation_history: List[Dict[str, str]] = None
+        conversation_history: List[Dict[str, str]] = None,
+        emit_heartbeat: bool = False
     ) -> Generator[Dict[str, Any], None, None]:
         """
         Retrieves context from ChromaDB, constructs grounded prompt,
@@ -151,6 +152,10 @@ class RAGService:
                 yield {"type": "token", "content": chunk}
             yield {"type": "citations", "citations": []}
             return
+
+        # Emit initial keepalive ping before vector store retrieval if requested
+        if emit_heartbeat:
+            yield {"type": "ping"}
 
         # 1. Retrieve top chunks
         results = vector_store.query(query, n_results=6)
@@ -211,6 +216,9 @@ class RAGService:
         messages.append({"role": "user", "content": user_prompt_with_context})
 
         # 3. Stream response from LLM with mid-stream resilience
+        if emit_heartbeat:
+            yield {"type": "ping"}
+
         try:
             for text_chunk in llm_adapter.stream_chat(messages, temperature=0.25):
                 yield {"type": "token", "content": text_chunk}

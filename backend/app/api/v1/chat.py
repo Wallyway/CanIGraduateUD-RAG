@@ -1,5 +1,7 @@
 import json
 import urllib.parse
+import threading
+import queue
 from typing import List, Dict, Optional, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -9,6 +11,8 @@ from app.services.rag_service import rag_service, is_other_career_or_faculty
 from app.db.session import SessionLocal, get_db
 from app.db.models import StudentQueryLog, SessionFeedback
 from app.api.deps import get_current_admin
+from app.core.config import settings
+from app.core import security_guardrails
 from app.core.security_guardrails import (
     extract_client_info,
     inspect_query_safety,
@@ -21,6 +25,30 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class SemaphoreReleaseGuard:
+    """
+    Ensures that an acquired semaphore permit is released unconditionally
+    exactly once upon stream completion, exception, client disconnect (GeneratorExit),
+    or garbage collection.
+    """
+    def __init__(self, semaphore: threading.Semaphore):
+        self.semaphore = semaphore
+        self.released = False
+        self._lock = threading.Lock()
+
+    def release(self):
+        with self._lock:
+            if not self.released:
+                self.released = True
+                try:
+                    self.semaphore.release()
+                except Exception as exc:
+                    logger.warning(f"[ConcurrencyGuard] Error releasing stream semaphore: {exc}")
+
+    def __del__(self):
+        self.release()
 
 # Bounded executor for asynchronous background cache writes
 _CACHE_WRITE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cache_writer")
@@ -252,8 +280,9 @@ def stream_chat_response(
             }
         )
 
-    # 6. Concurrency Limiter: Protect system against concurrent stream exhaustion
-    acquired = STREAM_CONCURRENCY_SEMAPHORE.acquire(blocking=False)
+    # 6. Concurrency Limiter: Protect system against concurrent stream exhaustion (>150 streams)
+    sem = getattr(security_guardrails, "STREAM_CONCURRENCY_SEMAPHORE", STREAM_CONCURRENCY_SEMAPHORE)
+    acquired = sem.acquire(blocking=False)
     if not acquired:
         def busy_stream():
             msg = "⚠️ El sistema se encuentra atendiendo un volumen muy alto de consultas simultáneas. Por favor reintenta en unos instantes."
@@ -267,31 +296,78 @@ def stream_chat_response(
             headers={"Retry-After": "5"}
         )
 
+    guard = SemaphoreReleaseGuard(sem)
+
     def event_generator():
         citation_count = 0
         collected_tokens = []
         collected_citations = []
         stream_success = False
         stream_had_error_event = False
+
+        q: queue.Queue = queue.Queue()
+        stop_worker = threading.Event()
+
+        def stream_worker():
+            try:
+                try:
+                    stream_iter = rag_service.answer_stream(payload.query, history_dicts, emit_heartbeat=True)
+                except TypeError:
+                    stream_iter = rag_service.answer_stream(payload.query, history_dicts)
+                for event in stream_iter:
+                    if stop_worker.is_set():
+                        break
+                    q.put(("event", event))
+                q.put(("done", None))
+            except BaseException as exc:
+                q.put(("error", exc))
+
+        worker_thread = threading.Thread(target=stream_worker, daemon=True)
+        worker_thread.start()
+
+        keepalive_interval = float(getattr(settings, "SSE_KEEPALIVE_INTERVAL_SECONDS", 15.0))
+        if keepalive_interval <= 0:
+            keepalive_interval = 15.0
+
         try:
-            for event in rag_service.answer_stream(payload.query, history_dicts):
-                if event.get("is_error"):
-                    stream_had_error_event = True
-                if event.get("type") == "token":
-                    collected_tokens.append(event.get("content", ""))
-                elif event.get("type") == "citations":
-                    collected_citations = event.get("citations", [])
-                    citation_count = len(collected_citations)
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-            stream_success = True
-            yield "data: [DONE]\n\n"
+            while True:
+                try:
+                    msg_type, item = q.get(timeout=keepalive_interval)
+                except queue.Empty:
+                    # Keep connection alive across intermediary proxies (Cloudflare, Vercel Edge)
+                    yield ": ping\n\n"
+                    continue
+
+                if msg_type == "done":
+                    stream_success = True
+                    yield "data: [DONE]\n\n"
+                    break
+                elif msg_type == "error":
+                    raise item
+                elif msg_type == "event":
+                    event = item
+                    if event.get("type") == "ping":
+                        yield ": ping\n\n"
+                        continue
+                    if event.get("is_error"):
+                        stream_had_error_event = True
+                    if event.get("type") == "token":
+                        collected_tokens.append(event.get("content", ""))
+                    elif event.get("type") == "citations":
+                        collected_citations = event.get("citations", [])
+                        citation_count = len(collected_citations)
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except GeneratorExit:
+            stop_worker.set()
+            raise
         except Exception as stream_err:
-            print(f"[ChatStream] Streaming exception: {stream_err}")
+            logger.error(f"[ChatStream] Streaming exception: {stream_err}")
             err_msg = f"\n\n*(Error temporal en la transmisión: {str(stream_err)})*"
-            yield f"data: {json.dumps({'type': 'token', 'content': err_msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'content': err_msg}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
         finally:
-            STREAM_CONCURRENCY_SEMAPHORE.release()
+            stop_worker.set()
+            guard.release()
             db_log = None
             try:
                 full_text = "".join(collected_tokens).lower()
@@ -358,7 +434,7 @@ def stream_chat_response(
                 db_log.add(log)
                 db_log.commit()
             except Exception as log_err:
-                print(f"[ChatLog] Error logging query: {log_err}")
+                logger.error(f"[ChatLog] Error logging query: {log_err}")
             finally:
                 if db_log:
                     db_log.close()
@@ -370,8 +446,10 @@ def stream_chat_response(
                     topic_cat = classify_topic(payload.query)
                     _submit_cache_write(payload.query, full_answer, collected_citations, topic_cat)
 
-    return StreamingResponse(
-        event_generator(),
+    gen = event_generator()
+
+    response = StreamingResponse(
+        gen,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -380,6 +458,14 @@ def stream_chat_response(
             "X-Cache-Hit": "false"
         }
     )
+    response._release_guard = guard
+    if hasattr(response, "body_iterator"):
+        try:
+            response.body_iterator._release_guard = guard
+        except AttributeError:
+            pass
+
+    return response
 
 class SessionFeedbackPayload(BaseModel):
     session_id: Optional[str] = None

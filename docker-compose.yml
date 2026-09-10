@@ -5,6 +5,10 @@ services:
     image: postgres:16-alpine
     container_name: can-i-graduate-postgres
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-can_i_graduate}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -34,7 +38,11 @@ services:
       dockerfile: Dockerfile
     container_name: can-i-graduate-backend
     restart: unless-stopped
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --limit-concurrency 500 --backlog 2048
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     ports:
       - "8000:8000"
     volumes:
@@ -53,6 +61,8 @@ services:
       - DB_POOL_RECYCLE=1800
       - DB_POOL_TIMEOUT=30
       - DB_POOL_PRE_PING=true
+      - STREAM_CONCURRENCY_LIMIT=150
+      - SSE_KEEPALIVE_INTERVAL_SECONDS=15
     depends_on:
       postgres:
         condition: service_healthy

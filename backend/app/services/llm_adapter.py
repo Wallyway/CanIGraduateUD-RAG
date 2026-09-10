@@ -415,13 +415,43 @@ class LLMAdapter:
     def _pseudo_embedding(self, text: str, dim: int = 384) -> List[float]:
         import hashlib
         import math
+        import re
+        import unicodedata
+
+        common_stopwords = {
+            'de', 'la', 'que', 'el', 'en', 'y', 'a', 'los', 'del', 'se', 'las', 'por', 'un',
+            'para', 'con', 'no', 'una', 'su', 'al', 'lo', 'como', 'mas', 'pero', 'sus', 'le',
+            'ya', 'o', 'este', 'si', 'porque', 'esta', 'entre', 'cuando', 'muy', 'sin', 'sobre',
+            'tambien', 'me', 'hasta', 'hay', 'donde', 'quien', 'desde', 'todo', 'nos', 'durante',
+            'acuerdo', 'resolucion', 'circular', 'articulo', 'art', 'csu', 'facultad', 'ingenieria',
+            'universidad', 'distrital', 'francisco', 'jose', 'caldas'
+        }
+
         vec = [0.0] * dim
-        for i, word in enumerate(text.lower().split()):
-            h = int(hashlib.md5(f"{word}_{i % 10}".encode('utf-8')).hexdigest(), 16)
-            pos = h % dim
-            vec[pos] += 1.0
-        # Normalize
-        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        clean_text = ''.join(
+            c for c in unicodedata.normalize('NFD', text.lower())
+            if unicodedata.category(c) != 'Mn'
+        )
+        words = re.findall(r'\b\w+\b', clean_text)
+        
+        for word in words:
+            if word in common_stopwords or len(word) <= 2:
+                weight = 0.2
+            elif word.isdigit():
+                weight = 0.5
+            else:
+                weight = 3.0
+            h = int(hashlib.md5(word.encode('utf-8')).hexdigest(), 16)
+            vec[h % dim] += weight
+
+        for w1, w2 in zip(words[:-1], words[1:]):
+            if w1.isalpha() and w2.isalpha() and w1 not in common_stopwords and w2 not in common_stopwords:
+                bigram = f'{w1}_{w2}'
+                h = int(hashlib.md5(bigram.encode('utf-8')).hexdigest(), 16)
+                vec[h % dim] += 2.0
+
+        # Smooth normalization with minimum length prior (prevents tiny header snippets from dominating)
+        norm = math.sqrt(sum(x * x for x in vec) + 25.0)
         return [x / norm for x in vec]
 
 llm_adapter = LLMAdapter()

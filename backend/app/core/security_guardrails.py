@@ -19,6 +19,11 @@ except ImportError:
 
 import logging
 
+try:
+    from app.core.config import settings
+except ImportError:
+    settings = None
+
 logger = logging.getLogger(__name__)
 
 # Maximum query length in characters to prevent token exhaustion DoS
@@ -775,5 +780,35 @@ class SlidingWindowRateLimiter:
 # Singletons
 strike_manager = SecurityStrikeManager()
 rate_limiter = SlidingWindowRateLimiter()
-# Global concurrency semaphore for LLM stream calls (max 25 simultaneous streams)
-STREAM_CONCURRENCY_SEMAPHORE = threading.Semaphore(25)
+
+# Concurrency tuning and capacity for streaming LLM calls (>200 concurrent students)
+_DEFAULT_STREAM_LIMIT = getattr(settings, "STREAM_CONCURRENCY_LIMIT", 150) if settings else 150
+STREAM_CONCURRENCY_SEMAPHORE = threading.Semaphore(_DEFAULT_STREAM_LIMIT)
+setattr(STREAM_CONCURRENCY_SEMAPHORE, "_initial_capacity", _DEFAULT_STREAM_LIMIT)
+
+
+def get_stream_capacity() -> int:
+    """Returns the maximum configured concurrency limit for streaming responses."""
+    if hasattr(STREAM_CONCURRENCY_SEMAPHORE, "_initial_capacity"):
+        return getattr(STREAM_CONCURRENCY_SEMAPHORE, "_initial_capacity")
+    return getattr(settings, "STREAM_CONCURRENCY_LIMIT", 150) if settings else 150
+
+
+def get_active_stream_count() -> int:
+    """
+    Returns the number of active streaming slots currently acquired.
+    Calculated as capacity minus the current available permits in STREAM_CONCURRENCY_SEMAPHORE.
+    """
+    capacity = get_stream_capacity()
+    val = getattr(STREAM_CONCURRENCY_SEMAPHORE, "_value", capacity)
+    return max(0, capacity - val)
+
+
+def set_stream_capacity(limit: int) -> None:
+    """
+    Dynamically adjusts stream concurrency capacity (useful for tests and runtime tuning).
+    """
+    global STREAM_CONCURRENCY_SEMAPHORE
+    STREAM_CONCURRENCY_SEMAPHORE = threading.Semaphore(limit)
+    setattr(STREAM_CONCURRENCY_SEMAPHORE, "_initial_capacity", limit)
+

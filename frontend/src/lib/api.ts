@@ -82,25 +82,31 @@ export async function streamChat(
       const lines = buffer.split("\n\n");
       buffer = lines.pop() || "";
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data: ")) continue;
-        const dataStr = trimmed.replace("data: ", "").trim();
+      for (const block of lines) {
+        const blockLines = block.split("\n");
+        for (const rawLine of blockLines) {
+          const trimmed = rawLine.trim();
+          // Explicitly ignore standard SSE comment frames (starting with :) or empty heartbeat lines
+          if (!trimmed || trimmed.startsWith(":")) continue;
+          if (!trimmed.startsWith("data:")) continue;
 
-        if (dataStr === "[DONE]") {
-          onDone();
-          return;
-        }
+          const dataStr = trimmed.replace(/^data:\s*/, "").trim();
 
-        try {
-          const parsed = JSON.parse(dataStr);
-          if (parsed.type === "token" && parsed.content) {
-            onToken(parsed.content);
-          } else if (parsed.type === "citations" && parsed.citations) {
-            onCitations(parsed.citations);
+          if (dataStr === "[DONE]") {
+            onDone();
+            return;
           }
-        } catch (e) {
-          // ignore parse failure on partial stream
+
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (parsed.type === "token" && parsed.content) {
+              onToken(parsed.content);
+            } else if (parsed.type === "citations" && parsed.citations) {
+              onCitations(parsed.citations);
+            }
+          } catch (e) {
+            // ignore parse failure on partial stream
+          }
         }
       }
     }
