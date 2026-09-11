@@ -492,31 +492,19 @@ export const ChatInterface: React.FC = () => {
       </div>
 
       {/* Recessed Apple UI Chrome Navbar (Locked / Sticky top-0 for seamless chat scrolling) */}
-      <header className="sticky top-0 z-40 h-14 border-b border-white/[0.08] bg-black/70 sm:bg-black/50 backdrop-blur-2xl px-4 sm:px-8 flex items-center justify-between transition-all duration-300">
-        <div className="flex items-center gap-3">
-          <div className="relative flex items-center justify-center shrink-0">
-            <Image
-              src="/images/logo-ud-header.png"
-              alt="Logo Universidad Distrital"
-              width={38}
-              height={38}
-              priority
-              className="w-9 h-9 sm:w-10 sm:h-10 object-contain drop-shadow-sm transition-transform duration-200 hover:scale-105"
-            />
-          </div>
-          <div className="flex items-center gap-2.5">
-            <Image
-              src="/images/logo-canigraduateud-header.png"
-              alt="Can I Graduate UD"
-              width={120}
-              height={36}
-              priority
-              className="h-6 sm:h-7 w-auto object-contain drop-shadow-sm transition-transform duration-200 hover:scale-[1.02]"
-            />
-            <span className="hidden md:inline-block text-[11px] font-medium text-neutral-400 border border-white/10 bg-white/[0.04] px-2 py-0.5 rounded-full">
-              Sistemas UD
-            </span>
-          </div>
+      <header className="sticky top-0 z-40 h-15 sm:h-16 border-b border-white/[0.08] bg-black/70 sm:bg-black/50 backdrop-blur-2xl px-4 sm:px-8 flex items-center justify-between transition-all duration-300">
+        <div className="flex items-center gap-2.5">
+          <Image
+            src="/images/logo-canigraduateud-header.png"
+            alt="Can I Graduate UD"
+            width={180}
+            height={44}
+            priority
+            className="h-8 sm:h-9 md:h-10 w-auto object-contain drop-shadow-sm transition-transform duration-200 hover:scale-[1.02]"
+          />
+          <span className="hidden lg:inline-block text-[10px] font-medium text-neutral-400 border border-white/10 bg-white/[0.04] px-2 py-0.5 rounded-full">
+            Sistemas UD
+          </span>
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
@@ -562,6 +550,23 @@ export const ChatInterface: React.FC = () => {
             aria-label="Repositorio de GitHub"
           >
             <Github className="w-4 h-4" />
+          </a>
+          <a
+            href="https://www.udistrital.edu.co"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Universidad Distrital Francisco José de Caldas"
+            className="relative flex items-center justify-center shrink-0 p-1 hover:opacity-85 transition-opacity duration-200 cursor-pointer"
+            aria-label="Portal Universidad Distrital"
+          >
+            <Image
+              src="/images/logo-ud-header.png"
+              alt="Logo Universidad Distrital"
+              width={40}
+              height={40}
+              priority
+              className="w-8 h-8 sm:w-9 sm:h-9 object-contain drop-shadow-sm transition-transform duration-200 hover:scale-105"
+            />
           </a>
         </div>
       </header>
