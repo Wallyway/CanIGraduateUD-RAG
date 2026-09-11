@@ -15,6 +15,7 @@ import {
   Star,
   Mail,
   Plus,
+  Github,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { streamChat, getDocumentPdfUrl, sendSessionFeedback } from "@/lib/api";
@@ -547,6 +548,16 @@ export const ChatInterface: React.FC = () => {
               <RotateCcw className="w-4 h-4" />
             </button>
           )}
+          <a
+            href="https://github.com/Wallyway/CanIGraduateUD-RAG"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Ver repositorio en GitHub (Código Abierto)"
+            className="p-2 text-neutral-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95 flex items-center justify-center cursor-pointer"
+            aria-label="Repositorio de GitHub"
+          >
+            <Github className="w-4 h-4" />
+          </a>
         </div>
       </header>
 
