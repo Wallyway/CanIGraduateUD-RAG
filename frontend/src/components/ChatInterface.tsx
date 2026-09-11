@@ -14,6 +14,7 @@ import {
   X,
   Star,
   Mail,
+  Plus,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { streamChat, getDocumentPdfUrl, sendSessionFeedback } from "@/lib/api";
@@ -171,6 +172,45 @@ export const ChatInterface: React.FC = () => {
       setMessages(stored);
     }
   }, []);
+
+  // Synchronize browser history with chat state so mobile back gesture/button returns to hero state instead of exiting
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (messages.length > 0) {
+      if (window.location.hash !== "#chat") {
+        window.history.pushState({ view: "chat" }, "", "#chat");
+      }
+    } else {
+      if (window.location.hash === "#chat") {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }
+  }, [messages.length]);
+
+  // Intercept mobile back gesture / popstate event
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handlePopState = () => {
+      // If feedback modal is open, back button closes the modal
+      if (isFeedbackModalOpen) {
+        setIsFeedbackModalOpen(false);
+        return;
+      }
+      // If user was in chat session and hit back, return smoothly to hero state
+      if (messages.length > 0 && window.location.hash !== "#chat") {
+        clearStoredChatHistory();
+        setMessages([]);
+        const newId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        sessionStorage.setItem("can_i_graduate_session_id", newId);
+        setSessionId(newId);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [messages.length, isFeedbackModalOpen]);
 
   // Smooth scroll when idle / initial load, non-blocking auto-scroll during token streaming
   useEffect(() => {
@@ -341,15 +381,22 @@ export const ChatInterface: React.FC = () => {
     );
   };
 
-  const handleClear = () => {
-    if (confirm("¿Deseas reiniciar la conversación?")) {
-      clearStoredChatHistory();
-      setMessages([]);
-      if (typeof window !== "undefined") {
-        const newId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        sessionStorage.setItem("can_i_graduate_session_id", newId);
-        setSessionId(newId);
+  const handleStartNewSession = () => {
+    clearStoredChatHistory();
+    setMessages([]);
+    if (typeof window !== "undefined") {
+      const newId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      sessionStorage.setItem("can_i_graduate_session_id", newId);
+      setSessionId(newId);
+      if (window.location.hash === "#chat") {
+        window.history.replaceState(null, "", window.location.pathname);
       }
+    }
+  };
+
+  const handleClear = () => {
+    if (confirm("¿Deseas reiniciar la conversación y comenzar una nueva sesión?")) {
+      handleStartNewSession();
     }
   };
 
@@ -395,7 +442,7 @@ export const ChatInterface: React.FC = () => {
   const isHeroState = messages.length === 0;
 
   return (
-    <div className="relative min-h-screen bg-black text-neutral-100 font-sans selection:bg-amber-500/30 selection:text-amber-200 overflow-x-hidden flex flex-col">
+    <div className="relative min-h-screen bg-black text-neutral-100 font-sans selection:bg-amber-500/30 selection:text-amber-200 overflow-x-clip flex flex-col">
       {/* Ambient MoltenMetal WebGL Background (Full-viewport coverage) */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div
@@ -427,8 +474,8 @@ export const ChatInterface: React.FC = () => {
         </div>
       </div>
 
-      {/* Recessed Apple UI Chrome Navbar */}
-      <header className="relative z-20 h-14 border-b border-white/[0.08] bg-black/40 backdrop-blur-2xl px-5 sm:px-8 flex items-center justify-between transition-all duration-300">
+      {/* Recessed Apple UI Chrome Navbar (Locked / Sticky top-0 for seamless chat scrolling) */}
+      <header className="sticky top-0 z-40 h-14 border-b border-white/[0.08] bg-black/70 sm:bg-black/50 backdrop-blur-2xl px-4 sm:px-8 flex items-center justify-between transition-all duration-300">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-gradient-to-b from-neutral-800 to-neutral-900 border border-white/10 flex items-center justify-center text-amber-400 shadow-inner">
             <GraduationCap className="w-4 h-4" />
@@ -446,23 +493,33 @@ export const ChatInterface: React.FC = () => {
         <div className="flex items-center gap-2 sm:gap-3">
           {messages.length > 0 && (
             <button
+              onClick={handleStartNewSession}
+              title="Comenzar una nueva sesión y volver al menú principal"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-full border border-amber-500/30 transition-all duration-200 active:scale-95 backdrop-blur-md cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline sm:inline">Nueva sesión</span>
+            </button>
+          )}
+          {messages.length > 0 && (
+            <button
               onClick={() => {
                 setFeedbackSuccess(false);
                 setFeedbackError(null);
                 setIsFeedbackModalOpen(true);
               }}
               title="Enviar feedback sobre esta sesión a canigraduateud@gmail.com"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-full border border-amber-500/30 transition-all duration-200 active:scale-95 backdrop-blur-md"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-300 hover:text-white bg-white/[0.06] hover:bg-white/[0.12] px-3 py-1.5 rounded-full border border-white/15 transition-all duration-200 active:scale-95 backdrop-blur-md cursor-pointer"
             >
-              <MessageSquareHeart className="w-3.5 h-3.5" />
-              <span>Feedback</span>
+              <MessageSquareHeart className="w-3.5 h-3.5 text-amber-400/80" />
+              <span className="hidden sm:inline">Feedback</span>
             </button>
           )}
           {messages.length > 0 && (
             <button
               onClick={handleClear}
               title="Reiniciar chat"
-              className="p-2 text-neutral-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95"
+              className="p-2 text-neutral-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95 cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
@@ -540,7 +597,33 @@ export const ChatInterface: React.FC = () => {
           </div>
         ) : (
           /* Active Chat Thread */
-          <div className="flex-1 flex flex-col justify-between max-w-3xl mx-auto w-full px-4 sm:px-6 py-6">
+          <div className="flex-1 flex flex-col justify-between max-w-3xl mx-auto w-full px-4 sm:px-6 py-4 sm:py-6">
+            {/* Active Session Top Bar with Quick "Nueva sesión" Action */}
+            <div className="flex items-center justify-between gap-3 p-3 sm:p-4 rounded-2xl bg-neutral-900/60 border border-white/10 backdrop-blur-xl mb-6 shadow-sm">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                  <GraduationCap className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs sm:text-sm font-semibold text-white tracking-tight flex items-center gap-2">
+                    <span>Asesoría de Grado Activa</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  </div>
+                  <p className="text-[11px] text-neutral-400 truncate">
+                    Ingeniería de Sistemas • Universidad Distrital
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleStartNewSession}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-amber-200 text-xs font-semibold border border-amber-500/30 transition-all active:scale-95 shadow-sm shrink-0 cursor-pointer"
+                title="Comenzar una nueva sesión y volver al menú principal"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Nueva sesión</span>
+              </button>
+            </div>
+
             <div className="space-y-6 pb-6">
               <AnimatePresence initial={false}>
                 {messages.map((msg) => (

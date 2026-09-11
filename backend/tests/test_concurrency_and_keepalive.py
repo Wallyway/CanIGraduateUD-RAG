@@ -459,22 +459,22 @@ def test_concurrent_threads_load_safety():
         try:
             req = _make_mock_request(client_ip=f"10.0.1.{thread_id}")
             payload = ChatRequest(query=f"Pregunta sobre monografía hilo {thread_id}", history=[])
-            with patch("app.api.v1.chat.rag_service.answer_stream", side_effect=mock_answer), \
-                 patch("app.api.v1.chat.redis_cache.get", return_value=None), \
-                 patch("app.api.v1.chat._submit_cache_write"):
-                resp = stream_chat_response(request=req, payload=payload, db=MagicMock())
-                assert resp.status_code == 200
-                events = _consume_response_body(resp)
-                assert any("Concurrencia segura." in e for e in events)
-                completed.append(thread_id)
+            resp = stream_chat_response(request=req, payload=payload, db=MagicMock())
+            assert resp.status_code == 200
+            events = _consume_response_body(resp)
+            assert any("Concurrencia segura." in e for e in events)
+            completed.append(thread_id)
         except Exception as e:
             errors.append((thread_id, str(e)))
 
-    threads = [threading.Thread(target=worker_request, args=(i,)) for i in range(25)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=10.0)
+    with patch("app.api.v1.chat.rag_service.answer_stream", side_effect=mock_answer), \
+         patch("app.api.v1.chat.redis_cache.get", return_value=None), \
+         patch("app.api.v1.chat._submit_cache_write"):
+        threads = [threading.Thread(target=worker_request, args=(i,)) for i in range(25)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10.0)
 
     assert len(errors) == 0, f"Thread errors encountered: {errors}"
     assert len(completed) == 25

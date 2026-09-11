@@ -351,49 +351,53 @@ def test_chat_stream_cache_hit_integration():
         {"type": "citations", "citations": [{"title": "Acuerdo 038 de 2015", "resolution": "Art. 12"}]}
     ]
 
-    # First request: Cache Miss -> calls rag_service.answer_stream
-    with patch.object(rag_service, "answer_stream", return_value=mock_events), \
+    with patch("app.core.redis_cache.get_query_embedding", return_value=[0.1] * 384), \
          patch.object(rag_service, "embed_query", return_value=[0.1] * 384):
-        resp1 = client.post(
+        # First request: Cache Miss -> calls rag_service.answer_stream
+        with patch.object(rag_service, "answer_stream", return_value=mock_events):
+            resp1 = client.post(
+                "/api/v1/chat/stream",
+                json={"query": test_query, "history": []},
+                headers={"X-Forwarded-For": "192.168.1.150"}
+            )
+            assert resp1.status_code == 200
+            assert resp1.headers.get("X-Cache-Hit") == "false"
+            assert "data: " in resp1.text
+            assert "[DONE]" in resp1.text
+            tokens1 = parse_sse_text(resp1.text)
+            assert "80% de créditos aprobados." in tokens1
+
+        # Wait for the asynchronous background thread to commit to cache (up to 3s)
+        for _ in range(30):
+            if redis_cache.get(test_query):
+                break
+            time.sleep(0.1)
+
+        # Second request with identical query: Cache Hit! (Does NOT call OpenRouter / answer_stream)
+        resp2 = client.post(
             "/api/v1/chat/stream",
             json={"query": test_query, "history": []},
-            headers={"X-Forwarded-For": "192.168.1.150"}
+            headers={"X-Forwarded-For": "192.168.1.151"}
         )
-        assert resp1.status_code == 200
-        assert resp1.headers.get("X-Cache-Hit") == "false"
-        assert "data: " in resp1.text
-        assert "[DONE]" in resp1.text
-        tokens1 = parse_sse_text(resp1.text)
-        assert "80% de créditos aprobados." in tokens1
+        assert resp2.status_code == 200
+        assert resp2.headers.get("X-Cache-Hit") == "true"
+        tokens2 = parse_sse_text(resp2.text)
+        assert tokens2 == tokens1
+        assert "Acuerdo 038 de 2015" in resp2.text
+        assert "[DONE]" in resp2.text
 
-    # Wait briefly for the asynchronous background thread to commit to cache
-    time.sleep(0.5)
-
-    # Second request with identical query: Cache Hit! (Does NOT call OpenRouter / answer_stream)
-    resp2 = client.post(
-        "/api/v1/chat/stream",
-        json={"query": test_query, "history": []},
-        headers={"X-Forwarded-For": "192.168.1.151"}
-    )
-    assert resp2.status_code == 200
-    assert resp2.headers.get("X-Cache-Hit") == "true"
-    tokens2 = parse_sse_text(resp2.text)
-    assert tokens2 == tokens1
-    assert "Acuerdo 038 de 2015" in resp2.text
-    assert "[DONE]" in resp2.text
-
-    # Third request with case and accents variation: Layer 1 Exact Match Hit!
-    resp3 = client.post(
-        "/api/v1/chat/stream",
-        json={"query": "  cuales son los requisitos de pasantia institucional?!  ", "history": []},
-        headers={"X-Forwarded-For": "192.168.1.152"}
-    )
-    assert resp3.status_code == 200
-    assert resp3.headers.get("X-Cache-Hit") == "true"
-    tokens3 = parse_sse_text(resp3.text)
-    assert tokens3 == tokens1
-    assert "Acuerdo 038 de 2015" in resp3.text
-    assert "[DONE]" in resp3.text
+        # Third request with case and accents variation: Layer 1 Exact Match Hit!
+        resp3 = client.post(
+            "/api/v1/chat/stream",
+            json={"query": "  cuales son los requisitos de pasantia institucional?!  ", "history": []},
+            headers={"X-Forwarded-For": "192.168.1.152"}
+        )
+        assert resp3.status_code == 200
+        assert resp3.headers.get("X-Cache-Hit") == "true"
+        tokens3 = parse_sse_text(resp3.text)
+        assert tokens3 == tokens1
+        assert "Acuerdo 038 de 2015" in resp3.text
+        assert "[DONE]" in resp3.text
 
 
 # ==============================================================================
