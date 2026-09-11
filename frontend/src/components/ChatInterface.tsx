@@ -631,9 +631,9 @@ export const ChatInterface: React.FC = () => {
                     width={180}
                     height={135}
                     priority
-                    className="h-10 sm:h-14 md:h-16 w-auto object-contain drop-shadow-sm select-none -translate-y-0.5 sm:-translate-y-1"
+                    className="h-10 sm:h-14 md:h-16 w-auto object-contain drop-shadow-sm select-none -translate-y-1.5 sm:-translate-y-2.5 md:-translate-y-3.5"
                   />
-                  <span className="select-none ml-1 sm:ml-1.5">?</span>
+                  <span className="select-none ml-0.5 sm:ml-1">?</span>
                 </span>
               </h1>
               <p className="text-xs sm:text-base text-neutral-400 max-w-md mx-auto leading-relaxed font-normal">
