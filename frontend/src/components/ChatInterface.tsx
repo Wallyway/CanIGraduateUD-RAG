@@ -30,10 +30,22 @@ import PromptInputBox from "./ui/ai-prompt-box";
 import { ThinkingState, PixelDotsLoader, TraceNode } from "./ui/agent-trace";
 
 const SUGGESTIONS = [
-  "¿Cuáles son todas las modalidades de grado disponibles?",
-  "¿Qué requisitos y cuántos créditos necesito para hacer una pasantía?",
-  "¿Cómo acredito el requisito de inglés B2 en el ILUD?",
-  "¿Qué paz y salvos debo solicitar para radicar mi carpeta de grado?",
+  {
+    label: "Modalidades de grado",
+    full: "¿Cuáles son todas las modalidades de grado disponibles?",
+  },
+  {
+    label: "Requisitos de pasantía",
+    full: "¿Qué requisitos y cuántos créditos necesito para hacer una pasantía?",
+  },
+  {
+    label: "Acreditación de inglés B2",
+    full: "¿Cómo acredito el requisito de inglés B2 en el ILUD?",
+  },
+  {
+    label: "Paz y salvos para grado",
+    full: "¿Qué paz y salvos debo solicitar para radicar mi carpeta de grado?",
+  },
 ];
 
 const buildDefaultTrace = (query: string): TraceNode[] => [
@@ -442,7 +454,11 @@ export const ChatInterface: React.FC = () => {
   const isHeroState = messages.length === 0;
 
   return (
-    <div className="relative min-h-screen bg-black text-neutral-100 font-sans selection:bg-amber-500/30 selection:text-amber-200 overflow-x-clip flex flex-col">
+    <div
+      className={`relative bg-black text-neutral-100 font-sans selection:bg-amber-500/30 selection:text-amber-200 overflow-x-clip flex flex-col ${
+        isHeroState ? "h-[100dvh] min-h-[100dvh] max-h-[100dvh] overflow-hidden sm:overflow-auto" : "min-h-[100dvh]"
+      }`}
+    >
       {/* Ambient MoltenMetal WebGL Background (Full-viewport coverage) */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div
@@ -528,27 +544,27 @@ export const ChatInterface: React.FC = () => {
       </header>
 
       {/* Main Viewport Content */}
-      <main className="relative z-10 flex-1 flex flex-col justify-between">
+      <main className={`relative z-10 flex-1 flex flex-col ${isHeroState ? "justify-center overflow-hidden" : "justify-between"}`}>
         {isHeroState ? (
           /* Apple Centered Hero State (Chat in the middle of the viewport with title above) */
-          <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-12 max-w-3xl mx-auto w-full">
+          <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-2 sm:py-10 max-w-3xl mx-auto w-full my-auto">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="text-center mb-8 sm:mb-10 w-full"
+              className="text-center mb-4 sm:mb-8 w-full"
             >
               {/* Category Pill */}
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.05] border border-white/10 text-neutral-300 text-xs font-medium tracking-wide mb-4 shadow-sm backdrop-blur-xl">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.05] border border-white/10 text-neutral-300 text-[11px] sm:text-xs font-medium tracking-wide mb-2 sm:mb-4 shadow-sm backdrop-blur-xl">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                 Facultad de Ingeniería • Universidad Distrital
               </div>
 
               {/* Title & Headline */}
-              <h1 className="text-4xl sm:text-5xl md:text-6xl font-semibold tracking-tight text-white mb-3">
+              <h1 className="text-3xl sm:text-5xl md:text-6xl font-semibold tracking-tight text-white mb-2 sm:mb-3">
                 Can I Graduate UD?
               </h1>
-              <p className="text-sm sm:text-base text-neutral-400 max-w-md mx-auto leading-relaxed font-normal">
+              <p className="text-xs sm:text-base text-neutral-400 max-w-md mx-auto leading-relaxed font-normal">
                 Asistente RAG oficial para resolver tus requisitos, pasantías,
                 inglés B2 y modalidades de grado en Ingeniería de Sistemas.
               </p>
@@ -576,20 +592,22 @@ export const ChatInterface: React.FC = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.5, delay: 0.2 }}
-              className="mt-8 w-full"
+              className="mt-4 sm:mt-7 w-full"
             >
-              <div className="flex items-center justify-center gap-1.5 text-xs text-neutral-400 mb-3 font-medium">
+              <div className="flex items-center justify-center gap-1.5 text-[11px] sm:text-xs text-neutral-400 mb-2 sm:mb-2.5 font-medium">
                 <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
                 <span>Consultas frecuentes de estudiantes:</span>
               </div>
-              <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
                 {SUGGESTIONS.map((sug, i) => (
                   <button
                     key={i}
-                    onClick={() => handleSend(sug)}
-                    className="text-xs px-4 py-2 rounded-full bg-white/[0.04] hover:bg-white/[0.09] text-neutral-300 hover:text-white border border-white/10 hover:border-white/20 transition-all duration-200 shadow-sm backdrop-blur-md active:scale-95 text-center"
+                    onClick={() => handleSend(sug.full)}
+                    className="text-[11.5px] sm:text-xs px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-white/[0.04] hover:bg-white/[0.09] text-neutral-300 hover:text-white border border-white/10 hover:border-white/20 transition-all duration-200 shadow-sm backdrop-blur-md active:scale-95 text-center cursor-pointer"
+                    title={sug.full}
                   >
-                    {sug}
+                    <span className="sm:hidden">{sug.label}</span>
+                    <span className="hidden sm:inline">{sug.full}</span>
                   </button>
                 ))}
               </div>
