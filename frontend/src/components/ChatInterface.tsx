@@ -154,6 +154,7 @@ export const ChatInterface: React.FC = () => {
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
   const [queueInfo, setQueueInfo] = useState<{ position: number; estimated_seconds: number } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isHeroState = messages.length === 0;
 
   // Session & Feedback states
   const [sessionId, setSessionId] = useState<string>(() => {
@@ -178,6 +179,36 @@ export const ChatInterface: React.FC = () => {
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackMailtoUrl, setFeedbackMailtoUrl] = useState<string | null>(null);
   const [feedbackGmailUrl, setFeedbackGmailUrl] = useState<string | null>(null);
+
+  // Strictly prevent body & document scrolling in Hero State (landing screen)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (isHeroState) {
+      document.documentElement.style.overflow = "hidden";
+      document.body.style.overflow = "hidden";
+      document.documentElement.style.overscrollBehavior = "none";
+      document.body.style.overscrollBehavior = "none";
+      document.documentElement.style.height = "100%";
+      document.body.style.height = "100%";
+    } else {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+      document.documentElement.style.overscrollBehavior = "";
+      document.body.style.overscrollBehavior = "";
+      document.documentElement.style.height = "";
+      document.body.style.height = "";
+    }
+
+    return () => {
+      document.documentElement.style.overflow = "";
+      document.body.style.overflow = "";
+      document.documentElement.style.overscrollBehavior = "";
+      document.body.style.overscrollBehavior = "";
+      document.documentElement.style.height = "";
+      document.body.style.height = "";
+    };
+  }, [isHeroState]);
 
   useEffect(() => {
     const stored = getStoredChatHistory();
@@ -452,12 +483,10 @@ export const ChatInterface: React.FC = () => {
     }
   };
 
-  const isHeroState = messages.length === 0;
-
   return (
     <div
       className={`relative bg-black text-neutral-100 font-sans selection:bg-amber-500/30 selection:text-amber-200 overflow-x-clip flex flex-col ${
-        isHeroState ? "h-[100dvh] min-h-[100dvh] max-h-[100dvh] overflow-hidden sm:overflow-auto" : "min-h-[100dvh]"
+        isHeroState ? "h-[100dvh] max-h-[100dvh] overflow-hidden overscroll-none" : "min-h-[100dvh]"
       }`}
     >
       {/* Ambient MoltenMetal WebGL Background (Full-viewport coverage) */}
@@ -578,19 +607,19 @@ export const ChatInterface: React.FC = () => {
       </header>
 
       {/* Main Viewport Content */}
-      <main className={`relative z-10 flex-1 flex flex-col ${isHeroState ? "justify-center overflow-hidden" : "justify-between"}`}>
+      <main className={`relative z-10 flex-1 flex flex-col ${isHeroState ? "justify-center items-center overflow-hidden px-4 sm:px-6" : "justify-between"}`}>
         {isHeroState ? (
           /* Apple Centered Hero State (Chat in the middle of the viewport with title above) */
-          <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-2 sm:py-10 max-w-3xl mx-auto w-full my-auto">
+          <div className="w-full max-w-3xl flex flex-col items-center justify-center py-2 sm:py-4">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="text-center mb-4 sm:mb-8 w-full"
+              className="text-center mb-3 sm:mb-6 w-full"
             >
 
               {/* Title & Headline */}
-              <h1 className="text-3xl sm:text-5xl md:text-6xl font-semibold tracking-tight text-white mb-2 sm:mb-3">
+              <h1 className="text-3xl sm:text-5xl md:text-6xl font-semibold tracking-tight text-white mb-2 sm:mb-2.5">
                 Can I Graduate UD?
               </h1>
               <p className="text-xs sm:text-base text-neutral-400 max-w-md mx-auto leading-relaxed font-normal">
@@ -621,9 +650,9 @@ export const ChatInterface: React.FC = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.5, delay: 0.2 }}
-              className="mt-4 sm:mt-7 w-full"
+              className="mt-3 sm:mt-5 w-full"
             >
-              <div className="flex items-center justify-center gap-1.5 text-[11px] sm:text-xs text-neutral-400 mb-2 sm:mb-2.5 font-medium">
+              <div className="flex items-center justify-center gap-1.5 text-[11px] sm:text-xs text-neutral-400 mb-2 font-medium">
                 <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
                 <span>Consultas frecuentes de estudiantes:</span>
               </div>

@@ -25,7 +25,9 @@
     --ring: 38 92% 50%;
   }
 
+  html,
   body {
+    min-height: 100dvh;
     @apply bg-black text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
   }

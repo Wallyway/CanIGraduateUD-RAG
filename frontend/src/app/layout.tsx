@@ -155,14 +155,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es" className="dark">
+    <html lang="es" className="dark h-full">
       <head>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLdData) }}
         />
       </head>
-      <body className="min-h-screen bg-zinc-950 font-sans text-zinc-100 flex flex-col">
+      <body className="min-h-[100dvh] bg-zinc-950 font-sans text-zinc-100 flex flex-col overscroll-none">
         {children}
         <Analytics />
       </body>
