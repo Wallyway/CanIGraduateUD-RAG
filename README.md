@@ -7,9 +7,10 @@
 [![Neon pgvector](https://img.shields.io/badge/VectorStore-Neon%20pgvector-00E599?style=flat-square&logo=postgresql)](https://neon.tech/)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
 [![Upstash Redis](https://img.shields.io/badge/Cache-Upstash%20Redis-00E599?style=flat-square&logo=redis)](https://upstash.com/)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker)](https://www.docker.com/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
+[![Production](https://img.shields.io/badge/Website-canigraduateud.site-black?style=flat-square&logo=vercel)](https://www.canigraduateud.site)
 
+> 🌐 **Despliegue en Producción**: [https://www.canigraduateud.site](https://www.canigraduateud.site)
+>
 > **Sistema Agéntico RAG de Alta Disponibilidad y Plataforma CRM de Gobernanza Normativa** para resolver dudas sobre requisitos, opciones y trámites de grado en el programa de **Ingeniería de Sistemas de la Universidad Distrital Francisco José de Caldas**.
 
 El sistema se fundamenta de forma estricta y verificable en acuerdos, estatutos y comunicados oficiales vigentes de la universidad, eliminando alucinaciones mediante citas explícitas a artículos normativos y proporcionando a los coordinadores académicos un CRM completo para supervisar correos entrantes, administrar el linaje normativo y monitorear las consultas de los estudiantes.
