@@ -619,8 +619,18 @@ export const ChatInterface: React.FC = () => {
             >
 
               {/* Title & Headline */}
-              <h1 className="text-3xl sm:text-5xl md:text-6xl font-semibold tracking-tight text-white mb-2 sm:mb-2.5">
-                Can I Graduate UD?
+              <h1 className="text-3xl sm:text-5xl md:text-6xl font-semibold tracking-tight text-white mb-2 sm:mb-2.5 flex items-center justify-center flex-wrap gap-x-2 sm:gap-x-3.5 leading-none">
+                <span>Can I Graduate</span>
+                <span className="inline-flex items-center shrink-0">
+                  <Image
+                    src="/images/ud-virrete.png"
+                    alt="UD"
+                    width={180}
+                    height={135}
+                    priority
+                    className="h-8 sm:h-12 md:h-14 w-auto object-contain drop-shadow-sm select-none -translate-y-0.5 sm:-translate-y-1"
+                  />
+                </span>
               </h1>
               <p className="text-xs sm:text-base text-neutral-400 max-w-md mx-auto leading-relaxed font-normal">
                 Asistente RAG oficial para resolver tus requisitos, pasantías,
