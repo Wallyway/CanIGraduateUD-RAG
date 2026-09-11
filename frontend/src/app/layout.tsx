@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://canigraduateud.vercel.app";
@@ -157,6 +158,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen bg-zinc-950 font-sans text-zinc-100 flex flex-col">
         {children}
+        <Analytics />
       </body>
     </html>
   );
