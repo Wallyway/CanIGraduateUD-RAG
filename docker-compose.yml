@@ -53,7 +53,6 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
-      - CHROMA_PERSIST_DIRECTORY=/app/data/chroma
       - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-can_i_graduate}
       - DATA_DIR=/app/data
       - DB_POOL_SIZE=30

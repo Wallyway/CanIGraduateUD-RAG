@@ -19,5 +19,5 @@ Can I Graduate UD es una plataforma diseñada para guiar a los estudiantes en su
 - **Resolución 004 de 2021**: Normas y equivalencias para la acreditación de lengua extranjera nivel B2.
 
 ## Enlaces Clave
-- [Plataforma Web Oficial](https://canigraduateud.vercel.app)
-- [Contexto Completo para LLMs](https://canigraduateud.vercel.app/llms-full.txt)
+- [Plataforma Web Oficial](https://www.canigraduateud.site)
+- [Contexto Completo para LLMs](https://www.canigraduateud.site/llms-full.txt)

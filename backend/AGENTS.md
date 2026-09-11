@@ -12,7 +12,7 @@ Operating guide, architecture invariants, and coding standards for AI agents mod
 | **Relational DB**   | PostgreSQL 16 (production)   | SQLAlchemy 2.0+, psycopg2-binary 2.9.9, SQLite dev fallback                          |
 | **Connection Pool** | SQLAlchemy `QueuePool`       | `size=30`, `overflow=50`, `recycle=1800s`, `pre_ping=True`, `timeout=30s`            |
 | **Query Cache**     | Upstash Redis + RAM Fallback | Layer 1 exact SHA-256 + Layer 2 semantic cosine similarity >= 0.95                   |
-| **Vector Store**    | Neon `pgvector` (HNSW)       | 100% Stateless in PostgreSQL `document_chunks` (1536-d, cosine ops), SQLite fallback |
+| **Vector Store**    | Neon `pgvector` (HNSW)       | 100% Stateless in PostgreSQL `document_chunks` (`DocumentChunk`, 1536-d, cosine ops) |
 | **LLM Provider**    | OpenRouter Multi-Model       | Primary `llama-3.1-8b`, Fallbacks `llama-3.3-70b` & `gemini-2.0-flash`               |
 | **Resilience**      | Exponential Backoff & Loops  | 3 retries (`1.5^attempt`), transient 429/50x retry, repetition detector              |
 | **Virtual Queue**   | FIFO `VirtualQueueManager`   | `STREAM_CONCURRENCY_SEMAPHORE` (150 slots), queue (100 cap, 15s wait)                |
@@ -25,10 +25,10 @@ Operating guide, architecture invariants, and coding standards for AI agents mod
 | --------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `app/core/`     | Cross-cutting infrastructure, configuration & security     | `config.py`, `redis_cache.py`, `security_guardrails.py`, `virtual_queue.py`    |
 | `app/db/`       | Database persistence, schema models & connection factory   | `models.py` (7 tables), `session.py` (QueuePool & init_db)                     |
-| `app/api/`      | HTTP & SSE presentation layer, authentication & routes     | `deps.py`, `v1/chat.py`, `v1/admin.py`, `v1/documents.py`, `v1/webhooks.py`    |
+| `app/api/`      | HTTP & SSE presentation layer, authentication & routes     | `deps.py`, `v1/chat.py` (/ban-status), `v1/admin.py`, `v1/documents.py`, `v1/webhooks.py` |
 | `app/services/` | Business logic, RAG pipeline, LLM & vector operations      | `rag_service.py`, `llm_adapter.py`, `vector_store.py`, `document_processor.py` |
 | `scripts/`      | Database migration and maintenance utilities               | `migrate_sqlite_to_postgres.py`                                                |
-| `tests/`        | Automated test suite (unit, integration, concurrency, E2E) | 8 test files, 121 automated tests                                              |
+| `tests/`        | Automated test suite (unit, integration, concurrency, E2E) | 10 test files, 135 automated tests passing                                     |
 
 ---
 
@@ -82,6 +82,7 @@ docker compose up -d postgres backend
 | `queue_ready` | `data: {"type": "queue_ready"}\n\n`                                  | Signal that semaphore permit was claimed  |
 | `token`       | `data: {"type": "token", "content": "chunk"}\n\n`                    | Incremental answer tokens from LLM        |
 | `citations`   | `data: {"type": "citations", "citations": [...]}\n\n`                | Verified normative citations list         |
+| `security_ban`| `data: {"type": "security_ban", "remaining_seconds": 86400, "reason": "..."}\n\n` | 24h ban notification and remaining penalty |
 | `: ping`      | `: ping\n\n`                                                         | Keepalive comment (emitted every 15s)     |
 | `[DONE]`      | `data: [DONE]\n\n`                                                   | Stream terminal signal                    |
 
@@ -110,36 +111,42 @@ docker compose up -d postgres backend
 
 ### C. Zero-Token Pre-Flight Security Gates
 
-Before touching LLM tokens or vector embeddings, all incoming queries MUST traverse 4 zero-token security gates:
+Before touching LLM tokens or vector embeddings, all incoming queries MUST traverse 5 zero-token security gates:
 
-1. **Gate 1 — 24h Ban Check**: Verify client IP, subnet (`/24` or `/64`), MAC address, and device ID against `strike_manager`.
+1. **Gate 1 — 24h Ban Check**: Verify client IP, subnet (`/24` or `/64`), MAC address, and device ID against `strike_manager` and `SecurityPenaltyLog`. Frontend verifies state and remaining seconds via `GET /api/v1/chat/ban-status`.
 2. **Gate 2 — Rate Limiter**: Enforce sliding window (10 requests/min). Exceeding returns HTTP 429.
 3. **Gate 3 — Attack & Abuse Gate**: Scan regex patterns for prompt injection, system prompt extraction, jailbreaks, and non-academic queries. Log strikes (3 strikes = 24h ban).
 4. **Gate 4 — Benign Greeting Gate**: Direct orientation for "hola" / "quién eres" without consuming LLM tokens.
 5. **Gate 5 — Hybrid Cache**: Check Layer 1 (exact normalized SHA-256) and Layer 2 (semantic cosine similarity >= 0.95).
 
-### D. Testing Invariants & Artifact Hygiene
+### D. Stateless Neon pgvector Store & ACID Cascades
+
+- **Stateless Vector Architecture**: Embeddings are stored natively in PostgreSQL `document_chunks` table via `DocumentChunk` model. Zero reliance on local filesystem vector files.
+- **Transactional Cascading Purge**: Document derogation and deletion leverage database foreign keys (`ondelete="CASCADE"`), immediately removing vectors from the HNSW index.
+
+### E. Testing Invariants & Artifact Hygiene
 
 - **Zero Orphan SQLite Files**: NEVER configure relative SQLite file paths in tests (e.g., `sqlite:///tmp_test.sqlite`). Use `sqlite:///:memory:` or `tempfile.NamedTemporaryFile` with unconditional file removal in `finally:`.
 - **State Reset Fixtures**: Concurrency and queue tests must use autouse fixtures to restore semaphore permits and reset queue state.
 
 ---
 
-## 7. Testing Standard (131 Tests)
+## 7. Testing Standard (135 Tests)
 
 | Test Module                         | Tests | Verified Functional Scope                                                    |
 | ----------------------------------- | ----- | ---------------------------------------------------------------------------- |
 | `test_redis_cache.py`               | 34    | Dual-layer cache, SHA-256 exact match, semantic cosine, RAM fallback, TTL    |
 | `test_openrouter_resilience.py`     | 30    | Fallbacks, exponential backoff, transient vs permanent 4xx, repetition loops |
-| `test_postgres_session.py`          | 15    | QueuePool parameters, dialect-agnostic DDL, CRUD across all 6 models         |
+| `test_postgres_session.py`          | 15    | QueuePool parameters, dialect-agnostic DDL, CRUD across all 7 models         |
 | `test_security_guardrails.py`       | 15    | Prompt injection, 0-token abuse gates, 3-strikes rule, 24h ban, subnet IP    |
 | `test_concurrency_and_keepalive.py` | 11    | Semaphore 150 limit, keepalive `: ping`, unconditional permit release        |
 | `test_virtual_queue.py`             | 10    | FIFO queue order, capacity saturation (503), cascading ticket wake           |
 | `test_pdf_deduplication.py`         | 6     | Bold OCR deduplication, Spanish diacritics, citation deduplication           |
 | `test_pgvector_store.py`            | 5     | HNSW cosine similarity, VectorType, filtering, cascade delete                |
+| `test_agent_docs_integrity.py`      | 4     | Repository hygiene, AGENTS.md < 200 lines, modular docs, 0 orphan artifacts   |
 | `e2e/test_derogation_e2e.py`        | 1     | Granular article and total document derogation lifecycle                     |
 
-All 131 tests MUST pass: `backend/.venv/bin/pytest backend/tests -q`.
+All 135 tests MUST pass: `backend/.venv/bin/pytest backend/tests -q`.
 
 ---
 
@@ -148,4 +155,4 @@ All 131 tests MUST pass: `backend/.venv/bin/pytest backend/tests -q`.
 Detailed specifications and deep architecture are organized in `backend/docs/`:
 
 - [`backend/docs/architecture.md`](docs/architecture.md): System architecture diagram (Mermaid), SSE streaming protocol, 4 zero-token gates, 3-strikes penalty system, Virtual Queue state machine, and OpenRouter resilience.
-- [`backend/docs/database_and_caching.md`](docs/database_and_caching.md): PostgreSQL schema for all 6 tables, QueuePool parameters, migration script guide, hybrid caching (L1/L2/RAM), and ChromaDB derogation filtering.
+- [`backend/docs/database_and_caching.md`](docs/database_and_caching.md): PostgreSQL schema for all 7 tables, QueuePool parameters, migration script guide, hybrid caching (L1/L2/RAM), and Neon pgvector DocumentChunk derogation filtering.

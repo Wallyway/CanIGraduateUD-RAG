@@ -1,7 +1,7 @@
 import { MetadataRoute } from "next";
 
 export default function robots(): MetadataRoute.Robots {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://canigraduateud.vercel.app";
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://www.canigraduateud.site";
 
   return {
     rules: [
@@ -10,11 +10,18 @@ export default function robots(): MetadataRoute.Robots {
         allow: "/",
         disallow: ["/admin/", "/api/"],
       },
-      // AI Crawlers & Generative Engine Optimization (GEO)
+      // Search Engine Crawlers
+      {
+        userAgent: ["Googlebot", "Bingbot", "Applebot"],
+        allow: "/",
+        disallow: ["/admin/", "/api/"],
+      },
+      // AI Search & Generative Engine Optimization (GEO) Crawlers
       {
         userAgent: [
           "GPTBot",
           "ChatGPT-User",
+          "OAI-SearchBot",
           "PerplexityBot",
           "ClaudeBot",
           "Claude-Web",
@@ -23,12 +30,15 @@ export default function robots(): MetadataRoute.Robots {
           "Amazonbot",
           "Bytespider",
           "CCBot",
+          "cohere-ai",
+          "Meta-ExternalAgent",
         ],
         allow: ["/", "/llms.txt", "/llms-full.txt"],
-        disallow: ["/admin/"],
+        disallow: ["/admin/", "/api/"],
       },
     ],
     sitemap: `${baseUrl}/sitemap.xml`,
     host: baseUrl,
   };
 }
+

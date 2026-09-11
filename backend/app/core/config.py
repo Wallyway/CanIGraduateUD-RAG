@@ -155,7 +155,6 @@ class Settings(BaseSettings):
 
         # Ensure directories exist
         os.makedirs(self.DATA_DIR, exist_ok=True)
-        os.makedirs(self.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
         os.makedirs(os.path.join(self.DATA_DIR, "uploads"), exist_ok=True)
         os.makedirs(os.path.join(self.DATA_DIR, "seed_documents"), exist_ok=True)
 

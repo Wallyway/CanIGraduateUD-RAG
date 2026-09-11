@@ -4,11 +4,13 @@
 [![React](https://img.shields.io/badge/React-18.3.1-blue?style=flat-square&logo=react)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python)](https://www.python.org/)
-[![ChromaDB](https://img.shields.io/badge/VectorStore-ChromaDB-FF6F00?style=flat-square)](https://www.trychroma.com/)
+[![Neon pgvector](https://img.shields.io/badge/VectorStore-Neon%20pgvector-00E599?style=flat-square&logo=postgresql)](https://neon.tech/)
+[![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL%2016-336791?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
+[![Upstash Redis](https://img.shields.io/badge/Cache-Upstash%20Redis-00E599?style=flat-square&logo=redis)](https://upstash.com/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker)](https://www.docker.com/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
 
-> **Sistema Agéntico RAG y Plataforma CRM de Gobernanza Normativa** para resolver dudas sobre requisitos, opciones y trámites de grado en el programa de **Ingeniería de Sistemas de la Universidad Distrital Francisco José de Caldas**.
+> **Sistema Agéntico RAG de Alta Disponibilidad y Plataforma CRM de Gobernanza Normativa** para resolver dudas sobre requisitos, opciones y trámites de grado en el programa de **Ingeniería de Sistemas de la Universidad Distrital Francisco José de Caldas**.
 
 El sistema se fundamenta de forma estricta y verificable en acuerdos, estatutos y comunicados oficiales vigentes de la universidad, eliminando alucinaciones mediante citas explícitas a artículos normativos y proporcionando a los coordinadores académicos un CRM completo para supervisar correos entrantes, administrar el linaje normativo y monitorear las consultas de los estudiantes.
 
@@ -31,27 +33,30 @@ El sistema se fundamenta de forma estricta y verificable en acuerdos, estatutos 
 │ • Rich PromptInputBox        │                         │ • 1. Triage & Ingestión Mail │
 │ • SSE Stream & Word Fade-In  │                         │ • 2. Base de Conocimiento MD │
 │ • Agent Trace & PixelDots    │                         │ • 3. Analítica (Airlytics)   │
-│ • Clickable Citation Badges  │                         │ • 4. Guardrails & Autogestión│
-│ • Visor PDF Nueva Pestaña    │                         │ • 5. Simulador de Correos    │
+│ • React Portal Citations     │                         │ • 4. Guardrails & Autogestión│
+│ • Baneo 24h & /ban-status    │                         │ • 5. Simulador de Correos    │
+│ • Vercel Analytics & WebGL   │                         │ • Visor PDF en Nueva Pestaña │
 └──────────────┬───────────────┘                         └──────────────┬───────────────┘
                │                                                        │
                ▼                                                        ▼
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
 │                                BACKEND API (FastAPI)                                  │
 ├───────────────────────────────────────────────────────────────────────────────────────┤
-│ • RAG Engine (OpenRouter / Gemini 2.0 Flash / OpenAI)                                 │
-│ • Markdown Converter & Derogation Clause Detector (pypdf)                             │
+│ • RAG Engine Stateless (OpenRouter Multi-Model / Llama 3.1 8B / Gemini 2.0 Flash)    │
+│ • Virtual Queue Concurrency (Semáforo 150 permisos, cola FIFO 100 y keepalive : ping) │
+│ • Zero-Token Security Gates (Baneo 24h /ban-status, Rate Limiter, 3-Strikes Anti-Abuse)│
+│ • Conversor PDF a Markdown & Extracción de Cláusulas Derogatorias (pypdf)            │
 │ • Triage Agent & IMAP Mailbox Poller (canigraduateud@gmail.com)                      │
-│ • Analytics Aggregator & Student Query Logger                                         │
-│ • Strict Institutional Guardrails & Derogation Conflict Detector                     │
+│ • Logging de Consultas & Analytics Aggregator (StudentQueryLog, SessionFeedback)     │
 └───────────────────────┬───────────────────────────────────────┬───────────────────────┘
                         ▼                                       ▼
        ┌─────────────────────────────────┐    ┌──────────────────────────────────┐
-       │     ChromaDB (Vector Store)     │    │   SQLite (Metadatos & Logs)      │
-       │  • Fragmentación semántica      │    │  • DocumentItem (Linaje & Docs)  │
-       │  • Eliminación por derogación   │    │  • EmailNotice (Triage)          │
-       │  • Búsqueda por similitud       │    │  • StudentQueryLog (KPIs & Gaps) │
-       │  • Metadatos de artículos & PDF │    │  • SystemSetting (Guardrails)    │
+       │   Neon PostgreSQL + pgvector    │    │      Caché Híbrida & Storage     │
+       │  • pgvector HNSW cosine (1536d) │    │  • Upstash Redis + RAM Fallback  │
+       │  • DocumentChunk (100% stateless)│   │  • Layer 1 Exacto (SHA-256)      │
+       │  • Cascada ACID en derogación   │    │  • Layer 2 Semántico (>= 0.95)   │
+       │  • 7 Modelos SQLAlchemy ORM     │    │  • QueuePool (30 base + 50 over) │
+       │  • SQLite fallback para pruebas │    │  • SQLite dev fallback local     │
        └─────────────────────────────────┘    └──────────────────────────────────┘
 ```
 
@@ -64,10 +69,13 @@ El sistema se fundamenta de forma estricta y verificable en acuerdos, estatutos 
 - **Diseño Apple Minimalist**: Tipografía SF Pro Display, fondo procedimental WebGL **`MoltenMetal`** con flujo de magma incandescente interactivo con el mouse (`ogl`), y tarjetas de cristal esmerilado (`backdrop-blur-2xl`).
 - **Caja de Entrada Enriquecida (`PromptInputBox`)**: Atajos de teclado, selector de modos, carga visual de archivos y píldoras de preguntas sugeridas.
 - **Streaming Fluido de Tokens**: Respuestas transmitidas por Server-Sent Events (SSE) con animación suave de aparición palabra por palabra (`word-fade`) mediante curvas de aceleración `cubic-bezier`.
-- **Trazabilidad Agéntica (`ThinkingState` / `PixelDotsLoader`)**: Visualización interactiva de los pasos de búsqueda en ChromaDB, acuerdos analizados y razonamiento normativo, que colapsa de forma limpia en _"Consultó normativa durante Xs"_.
+- **Trazabilidad Agéntica (`ThinkingState` / `PixelDotsLoader`)**: Visualización interactiva de los pasos de búsqueda vectorial en Neon pgvector, acuerdos analizados y razonamiento normativo, que colapsa de forma limpia en _"Consultó normativa durante Xs"_.
 - **Citaciones Oficiales Interactivas (`CitationBadge`)**:
+  - Renderizadas mediante **React Portal** (`createPortal`) montado en `document.body` para garantizar aislamiento visual total, previniendo recortes por `overflow-hidden` o colisiones de apilamiento `z-index`.
   - Botón directo con ícono `ExternalLink` que abre el documento o PDF oficial en una **nueva pestaña** (`target="_blank"`).
   - Modal emergente con el fragmento normativo exacto, artículo y fecha de emisión.
+- **Defensa Multi-Factor contra Abuso (Baneo 24h & `/ban-status`)**: Detección de inyecciones o abusos no académicos con regla de 3 strikes que aplica un baneo de 24 horas multi-factor (IP, Subnet `/24`, MAC y Device ID), sincronizado en tiempo real entre `localStorage` (`ud_banned_until`) y el endpoint `/api/v1/chat/ban-status`.
+- **Telemetría y Rendimiento Web (Vercel Analytics & Next.js 14)**: Integración nativa de `@vercel/analytics/next` en el `RootLayout` para monitorear rendimiento y Core Web Vitals.
 - **Guardrail Anti-Alucinación**: Si la pregunta no está contemplada en la normativa oficial cargada, el asistente lo declara explícitamente y orienta al estudiante hacia la dependencia encargada (Coordinación de Ingeniería de Sistemas o Secretaría de Facultad).
 
 ---
@@ -81,15 +89,15 @@ Inspirado en la disposición de barra lateral fija y visibilidad de datos tipo *
 - Conexión continua con el buzón institucional vía IMAP (`canigraduateud@gmail.com`) y soporte para Webhooks HTTP desde Microsoft 365 Power Automate.
 - **Evaluación Agéntica con LLM**: Puntaje de relevancia (0–100%), justificación del veredicto y propuesta de metadatos.
 - **Editor Inline de Metadatos**: Permite al administrador ajustar el título propuesto, número de resolución, fecha de vigencia y resumen curado antes de incorporar el comunicado al RAG.
-- **Acciones en Lote (Batch)**: Checkboxes para aprobar o descartar múltiples comunicados en un solo clic.
+- **Acciones en Lote (Batch)**: Checkboxes para aprobar o descartar múltiples comunicados en un solo clic con vectorización en Neon pgvector.
 
 #### B. Base de Conocimiento y Linaje Normativo (`KnowledgeBaseModule`)
 
 - Inventario normativo clasificado en tres estados de vigencia: `VIGENTE`, `MODIFICADO` y `DEROGADO`.
 - **Árbol de Linaje Normativo**: Vinculación relacional para saber qué acuerdo sustituye o modifica a otro (`supersedes_id`).
 - **Conversión PDF a Markdown Estructurado**: Procesador abierto con `pypdf` que limpia encabezados/pies de página, detecta cláusulas de derogación (_"deroga el acuerdo...", "modifica el artículo..."_) y genera Markdown limpio optimizado para embeddings.
-- **Probador Semántico en Tiempo Real**: Permite al administrador ingresar una consulta de prueba ("requisitos pasantía") y examinar al instante la distancia matemática y los fragmentos devueltos por ChromaDB.
-- **Purgado Inmediato de Derogaciones**: Al marcar una resolución como derogada, sus fragmentos se eliminan automáticamente de ChromaDB para impedir citas a normas sin vigencia.
+- **Probador Semántico en Tiempo Real**: Permite al administrador ingresar una consulta de prueba ("requisitos pasantía") y examinar al instante la distancia matemática y los fragmentos devueltos por Neon pgvector.
+- **Purgado Inmediato de Derogaciones**: Al marcar una resolución como derogada, sus fragmentos se eliminan automáticamente de Neon pgvector mediante cascada transaccional ACID (`DocumentChunk`) para impedir citas a normas sin vigencia.
 
 #### C. Analítica de Estudiantes (`AnalyticsDashboardModule`)
 
@@ -142,12 +150,14 @@ El sistema incluye en `backend/data/seed_documents/` las resoluciones y procedim
 
 | Capa                      | Tecnologías                                                                                                                 |
 | :------------------------ | :-------------------------------------------------------------------------------------------------------------------------- |
-| **Frontend**              | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS, Framer Motion, OGL (WebGL), Recharts 3, Radix UI, Lucide Icons |
-| **Backend**               | FastAPI, Python 3.11, Pydantic v2, Uvicorn                                                                                  |
-| **Bases de Datos**        | ChromaDB (Vector Store persistente), SQLite con SQLAlchemy ORM                                                              |
-| **Modelos & LLM**         | OpenRouter (Google Gemini 2.0 Flash / 1.5 Flash), OpenAI API spec                                                           |
+| **Frontend**              | Next.js 14 (App Router), React 18 (React Portal `createPortal`), TypeScript, Tailwind CSS, Framer Motion, OGL (WebGL), Recharts 3, Radix UI, Lucide Icons, Vercel Analytics (`@vercel/analytics/next`) |
+| **Backend**               | FastAPI 0.111+, Python 3.11, Pydantic v2, Uvicorn, SQLAlchemy 2.0+ (`QueuePool`), Virtual Queue Concurrency (150 slots)    |
+| **Bases de Datos**        | Neon PostgreSQL 16 con extensión `pgvector` (`DocumentChunk` 1536-d HNSW), SQLite como fallback local de desarrollo         |
+| **Caché Híbrida**         | Upstash Redis + Fallback en RAM thread-safe (Capa 1: SHA-256 exacto, Capa 2: Similitud Coseno semántica >= 0.95)          |
+| **Modelos & LLM**         | OpenRouter Multi-Model con motor de resiliencia (Primario: `Llama 3.1 8B`; Fallbacks: `Llama 3.3 70B`, `Gemini 2.0 Flash`)   |
+| **Seguridad & Gobernanza**| Guardrails pre-vuelo 0 tokens: Baneo 24h multi-factor con endpoint `/ban-status`, rate limit 10 req/min, regla de 3 strikes |
 | **Procesamiento PDF**     | PyPDF, MarkdownConverter con regex normativo y extracción de artículos                                                      |
-| **Email & Mensajería**    | IMAP (SSL puerto 993), SSE (Server-Sent Events)                                                                             |
+| **Email & Mensajería**    | IMAP (SSL puerto 993), SSE (Server-Sent Events) con heartbeat `: ping` cada 15s                                             |
 | **DevOps & Contenedores** | Docker, Docker Compose, Mise (`.mise.toml`), pnpm                                                                           |
 
 ---
@@ -208,7 +218,7 @@ python -m venv .venv
 source .venv/bin/activate  # En Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Indexar la normativa semilla en ChromaDB:
+# Indexar la normativa semilla en la base de datos (PostgreSQL pgvector / SQLite fallback):
 python -m app.scripts.seed_db
 
 # Iniciar el servidor backend:
@@ -251,8 +261,8 @@ CanIGraduateUD-RAG/
 │   │   ├── core/
 │   │   │   └── config.py          # Variables de entorno y ajustes
 │   │   ├── db/
-│   │   │   ├── models.py          # Modelos SQLAlchemy (Documentos, Triage, Logs)
-│   │   │   └── session.py         # Conexión SQLite y migraciones seguras
+│   │   │   ├── models.py          # Modelos SQLAlchemy (7 tablas: Documentos, Chunks, Logs, Triage)
+│   │   │   └── session.py         # Conexión QueuePool, PostgreSQL 16 y SQLite dev
 │   │   ├── scripts/
 │   │   │   └── seed_db.py         # Semillero e indexador de normativas UD
 │   │   └── services/
@@ -261,7 +271,7 @@ CanIGraduateUD-RAG/
 │   │       ├── markdown_converter.py # Conversor PDF a MD con cláusulas
 │   │       ├── rag_service.py        # Orquestador RAG y citaciones oficiales
 │   │       ├── triage_service.py     # Agente evaluador de correos con guardrails
-│   │       └── vector_store.py       # Driver ChromaDB
+│   │       └── vector_store.py       # Almacén vectorial Neon pgvector (DocumentChunk)
 │   ├── data/
 │   │   └── seed_documents/        # Resoluciones oficiales en Markdown
 │   ├── Dockerfile

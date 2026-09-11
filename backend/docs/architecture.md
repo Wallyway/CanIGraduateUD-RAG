@@ -52,7 +52,7 @@ flowchart TD
 
     subgraph RAGPipeline ["RAG Inference Pipeline (app/services/)"]
         AcquirePermit --> RAGService["rag_service.answer_stream()"]
-        RAGService --> VectorSearch["ChromaDB Vector Retrieval\n('ud_sistemas_regulations')"]
+        RAGService --> VectorSearch["Neon pgvector Retrieval\n(DocumentChunk HNSW Cosine)"]
         VectorSearch --> DerogationCheck["Derogation & Validity Filter\n(Omit superseded articles)"]
         DerogationCheck --> PromptAssembly["System Prompt & Context Assembly"]
         PromptAssembly --> OpenRouterResilience["OpenRouter Resilience Engine\n(Primary: Llama 3.1 8B\nFallbacks: Llama 3.3 70B, Gemini 2.0 Flash)"]

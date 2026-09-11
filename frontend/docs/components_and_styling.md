@@ -62,7 +62,7 @@ frontend/src/components/
 - **UX Features**:
   - Pill trigger displaying document title and article number with hover effects.
   - Quick-action external link icon navigating directly to the official University PDF.
-  - Click-to-open modal dialog providing full verified normative context, metadata, and an scrollable excerpt box.
+  - Click-to-open modal dialog rendered via React Portal (`createPortal(modal, document.body)`) to escape parent CSS stacking contexts and overflow clipping, providing full verified normative context, metadata, and a scrollable excerpt box.
 
 ### 2.3 `MoltenMetal.tsx` (`BackgroundWebGL`)
 - **Location**: `src/components/MoltenMetal.tsx` (411 lines)
@@ -105,7 +105,7 @@ frontend/src/components/
 #### `EmailTriageModule.tsx` (1,320 lines)
 - Two-pane management interface for university emails sent to `canigraduateud@gmail.com`.
 - Left pane: Filterable email list with status indicators (`pending`, `ingested`, `discarded`).
-- Right pane: Rich message viewer, attachment preview, and markdown extractor for one-click ingestion into the ChromaDB vector database.
+- Right pane: Rich message viewer, attachment preview, and markdown extractor for one-click ingestion into the Neon pgvector database.
 - Fires `onDataChanged={fetchStats}` to refresh sidebar counters.
 
 #### `KnowledgeBaseModule.tsx` (1,192 lines)

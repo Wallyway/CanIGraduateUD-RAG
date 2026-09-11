@@ -38,7 +38,7 @@ The frontend is built on Next.js 14 App Router and acts as the presentation and 
 +-----------------------------------------------------------------------------------+
 |                             FastAPI Backend (Port 8000)                           |
 |  - VirtualQueueManager (concurrency permits, keepalive : ping)                    |
-|  - RAG Pipeline (PostgreSQL 16, ChromaDB, Dual-Layer Cache, OpenRouter LLMs)      |
+|  - RAG Pipeline (PostgreSQL 16, Neon pgvector, Dual-Layer Cache, OpenRouter LLMs)  |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -255,6 +255,8 @@ Client state is managed through `src/lib/storage.ts` and `src/lib/api.ts` across
 |---|---|---|---|
 | `localStorage` | `can_i_graduate_ud_chat_history` | `ChatMessage[]` | Persistent student conversation thread. Survives browser reloads. |
 | `localStorage` | `can_i_graduate_ud_admin_token` | `string` | Administrative JWT token for authenticated CRM actions. |
+| `localStorage` | `ud_banned_until` | `string` | Expiration timestamp (ms) for active 24h security bans. |
+| `localStorage` | `ud_banned_reason` | `string` | Stored violation rationale displayed on client ban card. |
 | `localStorage` | `ud_client_device_id` | `string` | Randomly generated client UUID for persistent device tracking. |
 | `localStorage` | `ud_client_mac` | `string` | Deterministic synthetic hardware signature hash. |
 | `sessionStorage` | `can_i_graduate_session_id` | `string` | Ephemeral session token refreshed on browser tab restarts. |
@@ -352,7 +354,7 @@ Switching tabs updates the browser URL without full page reload via `router.repl
   - Institutional inbox monitoring incoming queries submitted to `canigraduateud@gmail.com`.
   - Email detail view displaying headers, parsed body, and file attachments.
   - Markdown extraction engine allowing coordinators to convert email inquiries into normative QA pairs.
-  - One-click actions: Approve & Ingest into ChromaDB vector store, Reject/Discard, or Draft Response.
+  - One-click actions: Approve & Ingest into Neon pgvector store, Reject/Discard, or Draft Response.
   - Dispatches `onDataChanged={fetchStats}` callback to update sidebar counters in real time.
 
 #### 3. `KnowledgeBaseModule`
@@ -363,7 +365,7 @@ Switching tabs updates the browser URL without full page reload via `router.repl
   - Integrated modal dialog supporting dual upload modes:
     - PDF document upload with automatic server-side text extraction.
     - Direct Markdown authoring for immediate institutional notices.
-  - Interactive semantic probe testing similarity against ChromaDB vectors.
+  - Interactive semantic probe testing similarity against Neon pgvector vectors.
 
 #### 4. `SessionFeedbackModule`
 - **Location**: `src/components/admin/SessionFeedbackModule.tsx` (510 lines)
