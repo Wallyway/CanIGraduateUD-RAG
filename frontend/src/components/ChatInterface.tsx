@@ -6,7 +6,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   Sparkles,
-  RotateCcw,
   HelpCircle,
   MessageSquareHeart,
   Send,
@@ -14,7 +13,6 @@ import {
   X,
   Star,
   Mail,
-  Plus,
   Github,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -438,11 +436,6 @@ export const ChatInterface: React.FC = () => {
     }
   };
 
-  const handleClear = () => {
-    if (confirm("¿Deseas reiniciar la conversación y comenzar una nueva sesión?")) {
-      handleStartNewSession();
-    }
-  };
 
   const handleSubmitFeedback = async () => {
     if (!feedbackComments.trim()) return;
@@ -548,16 +541,6 @@ export const ChatInterface: React.FC = () => {
         <div className="flex items-center gap-2 sm:gap-3">
           {messages.length > 0 && (
             <button
-              onClick={handleStartNewSession}
-              title="Comenzar una nueva sesión y volver al menú principal"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-full border border-amber-500/30 transition-all duration-200 active:scale-95 backdrop-blur-md cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="hidden xs:inline sm:inline">Nueva sesión</span>
-            </button>
-          )}
-          {messages.length > 0 && (
-            <button
               onClick={() => {
                 setFeedbackSuccess(false);
                 setFeedbackError(null);
@@ -570,25 +553,18 @@ export const ChatInterface: React.FC = () => {
               <span className="hidden sm:inline">Feedback</span>
             </button>
           )}
-          {messages.length > 0 && (
-            <button
-              onClick={handleClear}
-              title="Reiniciar chat"
-              className="p-2 text-neutral-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95 cursor-pointer"
+          {messages.length === 0 && (
+            <a
+              href="https://github.com/Wallyway/CanIGraduateUD-RAG"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Ver repositorio en GitHub (Código Abierto)"
+              className="p-2 text-neutral-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95 flex items-center justify-center cursor-pointer"
+              aria-label="Repositorio de GitHub"
             >
-              <RotateCcw className="w-4 h-4" />
-            </button>
+              <Github className="w-4 h-4" />
+            </a>
           )}
-          <a
-            href="https://github.com/Wallyway/CanIGraduateUD-RAG"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Ver repositorio en GitHub (Código Abierto)"
-            className="p-2 text-neutral-400 hover:text-white hover:bg-white/10 rounded-full transition-all active:scale-95 flex items-center justify-center cursor-pointer"
-            aria-label="Repositorio de GitHub"
-          >
-            <Github className="w-4 h-4" />
-          </a>
           <a
             href="https://www.udistrital.edu.co"
             target="_blank"
