@@ -531,10 +531,10 @@ export const ChatInterface: React.FC = () => {
             <Image
               src="/images/logo-canigraduateud-header.png"
               alt="Can I Graduate UD"
-              width={220}
-              height={84}
+              width={180}
+              height={44}
               priority
-              className="h-11 sm:h-12 md:h-[50px] w-auto object-contain drop-shadow-sm"
+              className="h-8 sm:h-9 md:h-10 w-auto object-contain drop-shadow-sm -translate-y-1 sm:-translate-y-1.5 md:-translate-y-2"
             />
           </button>
           <span className="hidden lg:inline-block text-[10px] font-medium text-neutral-400 border border-white/10 bg-white/[0.04] px-2 py-0.5 rounded-full">
