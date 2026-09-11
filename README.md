@@ -15,6 +15,10 @@
 
 El sistema se fundamenta de forma estricta y verificable en acuerdos, estatutos y comunicados oficiales vigentes de la universidad, eliminando alucinaciones mediante citas explícitas a artículos normativos y proporcionando a los coordinadores académicos un CRM completo para supervisar correos entrantes, administrar el linaje normativo y monitorear las consultas de los estudiantes.
 
+<p align="center">
+  <img src="frontend/showcase-readme.png" alt="Can I Graduate UD? — Interfaz Principal" width="100%" />
+</p>
+
 ---
 
 ## 📸 Arquitectura del Sistema
@@ -149,17 +153,17 @@ El sistema incluye en `backend/data/seed_documents/` las resoluciones y procedim
 
 ## 🛠️ Stack Tecnológico
 
-| Capa                      | Tecnologías                                                                                                                 |
-| :------------------------ | :-------------------------------------------------------------------------------------------------------------------------- |
-| **Frontend**              | Next.js 14 (App Router), React 18 (React Portal `createPortal`), TypeScript, Tailwind CSS, Framer Motion, OGL (WebGL), Recharts 3, Radix UI, Lucide Icons, Vercel Analytics (`@vercel/analytics/next`) |
-| **Backend**               | FastAPI 0.111+, Python 3.11, Pydantic v2, Uvicorn, SQLAlchemy 2.0+ (`QueuePool`), Virtual Queue Concurrency (150 slots)    |
-| **Bases de Datos**        | Neon PostgreSQL 16 con extensión `pgvector` (`DocumentChunk` 1536-d HNSW), SQLite como fallback local de desarrollo         |
-| **Caché Híbrida**         | Upstash Redis + Fallback en RAM thread-safe (Capa 1: SHA-256 exacto, Capa 2: Similitud Coseno semántica >= 0.95)          |
-| **Modelos & LLM**         | OpenRouter Multi-Model con motor de resiliencia (Primario: `Llama 3.1 8B`; Fallbacks: `Llama 3.3 70B`, `Gemini 2.0 Flash`)   |
-| **Seguridad & Gobernanza**| Guardrails pre-vuelo 0 tokens: Baneo 24h multi-factor con endpoint `/ban-status`, rate limit 10 req/min, regla de 3 strikes |
-| **Procesamiento PDF**     | PyPDF, MarkdownConverter con regex normativo y extracción de artículos                                                      |
-| **Email & Mensajería**    | IMAP (SSL puerto 993), SSE (Server-Sent Events) con heartbeat `: ping` cada 15s                                             |
-| **DevOps & Contenedores** | Docker, Docker Compose, Mise (`.mise.toml`), pnpm                                                                           |
+| Capa                       | Tecnologías                                                                                                                                                                                            |
+| :------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Frontend**               | Next.js 14 (App Router), React 18 (React Portal `createPortal`), TypeScript, Tailwind CSS, Framer Motion, OGL (WebGL), Recharts 3, Radix UI, Lucide Icons, Vercel Analytics (`@vercel/analytics/next`) |
+| **Backend**                | FastAPI 0.111+, Python 3.11, Pydantic v2, Uvicorn, SQLAlchemy 2.0+ (`QueuePool`), Virtual Queue Concurrency (150 slots)                                                                                |
+| **Bases de Datos**         | Neon PostgreSQL 16 con extensión `pgvector` (`DocumentChunk` 1536-d HNSW), SQLite como fallback local de desarrollo                                                                                    |
+| **Caché Híbrida**          | Upstash Redis + Fallback en RAM thread-safe (Capa 1: SHA-256 exacto, Capa 2: Similitud Coseno semántica >= 0.95)                                                                                       |
+| **Modelos & LLM**          | OpenRouter Multi-Model con motor de resiliencia (Primario: `Llama 3.1 8B`; Fallbacks: `Llama 3.3 70B`, `Gemini 2.0 Flash`)                                                                             |
+| **Seguridad & Gobernanza** | Guardrails pre-vuelo 0 tokens: Baneo 24h multi-factor con endpoint `/ban-status`, rate limit 10 req/min, regla de 3 strikes                                                                            |
+| **Procesamiento PDF**      | PyPDF, MarkdownConverter con regex normativo y extracción de artículos                                                                                                                                 |
+| **Email & Mensajería**     | IMAP (SSL puerto 993), SSE (Server-Sent Events) con heartbeat `: ping` cada 15s                                                                                                                        |
+| **DevOps & Contenedores**  | Docker, Docker Compose, Mise (`.mise.toml`), pnpm                                                                                                                                                      |
 
 ---
 
