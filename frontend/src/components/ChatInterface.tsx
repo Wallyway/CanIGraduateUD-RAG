@@ -629,37 +629,6 @@ export const ChatInterface: React.FC = () => {
         ) : (
           /* Active Chat Thread */
           <div className="flex-1 flex flex-col justify-between max-w-3xl mx-auto w-full px-4 sm:px-6 py-4 sm:py-6">
-            {/* Active Session Top Bar with Quick "Nueva sesión" Action */}
-            <div className="flex items-center justify-between gap-3 p-3 sm:p-4 rounded-2xl bg-neutral-900/60 border border-white/10 backdrop-blur-xl mb-6 shadow-sm">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="relative flex items-center justify-center shrink-0">
-                  <Image
-                    src="/images/logo-ud-header.png"
-                    alt="Logo Universidad Distrital"
-                    width={32}
-                    height={32}
-                    className="w-8 h-8 object-contain drop-shadow-sm"
-                  />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs sm:text-sm font-semibold text-white tracking-tight flex items-center gap-2">
-                    <span>Asesoría de Grado Activa</span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  </div>
-                  <p className="text-[11px] text-neutral-400 truncate">
-                    Ingeniería de Sistemas • Universidad Distrital
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={handleStartNewSession}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 sm:py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-amber-200 text-xs font-semibold border border-amber-500/30 transition-all active:scale-95 shadow-sm shrink-0 cursor-pointer"
-                title="Comenzar una nueva sesión y volver al menú principal"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Nueva sesión</span>
-              </button>
-            </div>
 
             <div className="space-y-6 pb-6">
               <AnimatePresence initial={false}>
