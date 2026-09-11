@@ -7,14 +7,14 @@ from typing import Optional, Dict, Any, Tuple, List
 from datetime import datetime, timedelta
 try:
     from fastapi import Request, HTTPException, status
-except ImportError:
+except (ImportError, Exception):
     Request = Any
     HTTPException = Exception
     status = Any
 
 try:
     from sqlalchemy.orm import Session
-except ImportError:
+except (ImportError, Exception):
     Session = Any
 
 import logging
@@ -200,9 +200,13 @@ def calculate_subnet(ip_str: str) -> str:
     """
     Calculates the subnet /24 for IPv4 or /64 for IPv6 to prevent
     trivial network hop evasions.
+    Only groups into /24 or /64 if ip_obj.is_global is True.
+    If private (is_private), loopback (is_loopback), or non-global, returns the IP itself without masking.
     """
     try:
         ip_obj = ipaddress.ip_address(ip_str)
+        if getattr(ip_obj, "is_private", False) or getattr(ip_obj, "is_loopback", False) or not getattr(ip_obj, "is_global", False):
+            return ip_str
         if ip_obj.version == 4:
             network = ipaddress.IPv4Network(f"{ip_str}/24", strict=False)
             return str(network)
@@ -467,15 +471,19 @@ class SecurityStrikeManager:
         ip: str,
         subnet: str,
         device_id: Optional[str] = None,
-        mac: Optional[str] = None
+        mac: Optional[str] = None,
+        db: Optional[Session] = None
     ) -> Tuple[bool, int, Optional[str]]:
         """
         Checks if any client identifier (IP, MAC, Device ID, or Network Subnet)
-        is currently under a 24-hour ban.
+        is currently under a 24-hour ban. Checks in-memory cache and falls back
+        to PostgreSQL SecurityPenaltyLog for active bans across workers.
         Returns: (is_banned, remaining_seconds, ban_reason)
         """
         now = time.time()
-        keys_to_check = [f"ip:{ip}", f"subnet:{subnet}"]
+        keys_to_check = [f"ip:{ip}"]
+        if subnet and subnet != ip:
+            keys_to_check.append(f"subnet:{subnet}")
         if device_id:
             keys_to_check.append(f"dev:{device_id}")
         if mac:
@@ -493,6 +501,63 @@ class SecurityStrikeManager:
                             else "Uso indebido reiterado"
                         )
                         return True, remaining, last_reason
+
+        # Synchronize with PostgreSQL if in-memory cache does not indicate an active ban
+        if db:
+            try:
+                from app.db.models import SecurityPenaltyLog
+                from sqlalchemy import or_
+                now_dt = datetime.utcnow()
+                conditions = [SecurityPenaltyLog.ip_address == ip]
+                if subnet and subnet != ip:
+                    conditions.append(SecurityPenaltyLog.subnet == subnet)
+                if device_id:
+                    conditions.append(SecurityPenaltyLog.device_id == device_id)
+                if mac:
+                    conditions.append(SecurityPenaltyLog.mac_address == mac)
+
+                active_db_ban = db.query(SecurityPenaltyLog).filter(
+                    SecurityPenaltyLog.is_banned == True,
+                    SecurityPenaltyLog.banned_until > now_dt,
+                    or_(*conditions)
+                ).order_by(SecurityPenaltyLog.banned_until.desc()).first()
+
+                if (
+                    isinstance(active_db_ban, SecurityPenaltyLog)
+                    and isinstance(getattr(active_db_ban, "banned_until", None), datetime)
+                    and active_db_ban.is_banned is True
+                ):
+                    remaining_sec = max(1, int((active_db_ban.banned_until - now_dt).total_seconds()))
+                    ban_ts = now + remaining_sec
+                    reason = str(active_db_ban.last_reason or "Uso indebido reiterado")
+
+                    # Synchronize into in-memory cache
+                    with self._lock:
+                        all_keys = [f"ip:{active_db_ban.ip_address}"]
+                        if active_db_ban.subnet:
+                            all_keys.append(f"subnet:{active_db_ban.subnet}")
+                        if active_db_ban.device_id:
+                            all_keys.append(f"dev:{active_db_ban.device_id}")
+                        if active_db_ban.mac_address:
+                            all_keys.append(f"mac:{active_db_ban.mac_address}")
+                        all_keys.extend(keys_to_check)
+
+                        for k in set(all_keys):
+                            rec = self._get_record(k)
+                            rec.strikes = active_db_ban.strike_count or MAX_STRIKES
+                            rec.banned_until = ban_ts
+                            rec.linked_keys.update(all_keys)
+                            if not rec.violation_history:
+                                rec.violation_history.append({
+                                    "time": (active_db_ban.created_at or now_dt).isoformat(),
+                                    "type": "BAN_SYNC",
+                                    "reason": reason,
+                                    "query": active_db_ban.last_query or ""
+                                })
+
+                    return True, remaining_sec, reason
+            except Exception as e:
+                logger.error(f"[SecurityStrikeManager] Error checking penalty in DB: {e}")
 
         return False, 0, None
 
@@ -512,8 +577,13 @@ class SecurityStrikeManager:
         Registers a strike against the client entity (IP, Device ID, MAC).
         When the client entity reaches 3 strikes, activates a 24-hour ban
         penalizing IP, MAC, Device ID, and the entire Network Subnet.
+        In multi-worker environments, queries PostgreSQL SecurityPenaltyLog
+        to coordinate strike counting and bans across workers.
         """
         now = time.time()
+        now_dt = datetime.utcnow()
+        cutoff_dt = now_dt - timedelta(seconds=PENALTY_DURATION_SECONDS)
+
         # Primary keys tracking the specific client actor:
         primary_keys = [f"ip:{ip}"]
         if device_id:
@@ -522,13 +592,124 @@ class SecurityStrikeManager:
             primary_keys.append(f"mac:{mac}")
 
         all_linked_keys = list(primary_keys)
-        all_linked_keys.append(f"subnet:{subnet}")
+        if subnet:
+            all_linked_keys.append(f"subnet:{subnet}")
+
+        # Check in-memory for an already active ban
+        is_already_banned_in_mem = False
+        mem_ban_remaining = 0
+        mem_ban_reason = None
+
+        with self._lock:
+            for k in all_linked_keys:
+                if k in self._records:
+                    rec = self._records[k]
+                    if rec.banned_until and rec.banned_until > now:
+                        is_already_banned_in_mem = True
+                        mem_ban_remaining = max(1, int(rec.banned_until - now))
+                        mem_ban_reason = (
+                            rec.violation_history[-1].get("reason", reason)
+                            if rec.violation_history
+                            else reason
+                        )
+                        break
+
+        db_prior_strikes = 0
+        is_already_banned_in_db = False
+        db_ban_remaining = 0
+        db_ban_reason = None
+
+        if db:
+            try:
+                from app.db.models import SecurityPenaltyLog
+                from sqlalchemy import or_
+
+                conds = [SecurityPenaltyLog.ip_address == ip]
+                if device_id:
+                    conds.append(SecurityPenaltyLog.device_id == device_id)
+                if mac:
+                    conds.append(SecurityPenaltyLog.mac_address == mac)
+
+                # Active ban conditions include subnet if applicable
+                active_ban_conds = list(conds)
+                if subnet and subnet != ip:
+                    active_ban_conds.append(SecurityPenaltyLog.subnet == subnet)
+
+                # 1. Check if an active ban already exists in DB
+                active_ban = db.query(SecurityPenaltyLog).filter(
+                    SecurityPenaltyLog.is_banned == True,
+                    SecurityPenaltyLog.banned_until > now_dt,
+                    or_(*active_ban_conds)
+                ).order_by(SecurityPenaltyLog.banned_until.desc()).first()
+
+                if (
+                    isinstance(active_ban, SecurityPenaltyLog)
+                    and isinstance(getattr(active_ban, "banned_until", None), datetime)
+                    and active_ban.is_banned is True
+                ):
+                    is_already_banned_in_db = True
+                    db_ban_remaining = max(1, int((active_ban.banned_until - now_dt).total_seconds()))
+                    db_ban_reason = str(active_ban.last_reason or reason)
+                else:
+                    # 2. Check for the most recent expired ban, if any
+                    last_expired_ban = db.query(SecurityPenaltyLog).filter(
+                        SecurityPenaltyLog.is_banned == True,
+                        or_(*conds)
+                    ).order_by(SecurityPenaltyLog.created_at.desc()).first()
+
+                    effective_cutoff = cutoff_dt
+                    if (
+                        isinstance(last_expired_ban, SecurityPenaltyLog)
+                        and isinstance(getattr(last_expired_ban, "banned_until", None), datetime)
+                    ):
+                        if last_expired_ban.banned_until > effective_cutoff:
+                            effective_cutoff = last_expired_ban.banned_until
+
+                    # 3. Query recent strike logs after the last ban
+                    recent_strikes = db.query(SecurityPenaltyLog).filter(
+                        SecurityPenaltyLog.created_at >= effective_cutoff,
+                        SecurityPenaltyLog.is_banned == False,
+                        or_(*conds)
+                    ).all()
+
+                    if isinstance(recent_strikes, list) and all(isinstance(s, SecurityPenaltyLog) for s in recent_strikes):
+                        db_prior_strikes = max(len(recent_strikes), max((s.strike_count for s in recent_strikes if isinstance(getattr(s, "strike_count", None), int)), default=0))
+            except Exception as e:
+                logger.error(f"[SecurityStrikeManager] Error querying DB strikes: {e}")
+
+        # If already banned in DB or in-memory, synchronize and return active ban message
+        if is_already_banned_in_db or is_already_banned_in_mem:
+            active_rem = db_ban_remaining if is_already_banned_in_db else mem_ban_remaining
+            active_reason = (db_ban_reason if is_already_banned_in_db else mem_ban_reason) or reason
+            with self._lock:
+                for k in all_linked_keys:
+                    rec = self._get_record(k)
+                    rec.banned_until = now + active_rem
+                    rec.strikes = MAX_STRIKES
+            hours = active_rem // 3600
+            mins = (active_rem % 3600) // 60
+            user_msg = (
+                f"🚫 **Acceso Suspendido por 24 Horas (3/3 Strikes de Abuso):**\n\n"
+                f"Tu dispositivo, dirección MAC y red IP (`{ip}`) han sido suspendidos temporalmente durante 24 horas "
+                f"por acumular 3 envíos que no corresponden al ámbito académico de la Universidad Distrital o "
+                f"que infringen las políticas de seguridad (Motivo: *{active_reason}*).\n\n"
+                f"⏳ **Tiempo restante de penalización:** {hours} horas y {mins} minutos.\n\n"
+                f"🔒 *Esta medida previene el consumo desmedido de tokens y protege la disponibilidad de la plataforma para la comunidad universitaria.*"
+            )
+            return {
+                "strike_count": MAX_STRIKES,
+                "is_banned": True,
+                "remaining_seconds": active_rem,
+                "reason": active_reason,
+                "message": user_msg
+            }
 
         max_strike_count = 0
         is_now_banned = False
         remaining_seconds = 0
 
         with self._lock:
+            current_mem_strikes = 0
             for k in primary_keys:
                 rec = self._get_record(k)
                 rec.linked_keys.update(all_linked_keys)
@@ -536,8 +717,17 @@ class SecurityStrikeManager:
                 if rec.banned_until and rec.banned_until <= now:
                     rec.strikes = 0
                     rec.banned_until = None
+                if rec.strikes > current_mem_strikes:
+                    current_mem_strikes = rec.strikes
 
-                rec.strikes += 1
+            effective_prior = max(current_mem_strikes, db_prior_strikes)
+            new_strike_count = min(MAX_STRIKES, effective_prior + 1)
+            max_strike_count = new_strike_count
+
+            for k in primary_keys:
+                rec = self._get_record(k)
+                rec.linked_keys.update(all_linked_keys)
+                rec.strikes = new_strike_count
                 rec.last_strike_time = now
                 rec.violation_history.append({
                     "time": datetime.utcnow().isoformat(),
@@ -545,9 +735,6 @@ class SecurityStrikeManager:
                     "reason": reason,
                     "query": query[:120],
                 })
-
-                if rec.strikes > max_strike_count:
-                    max_strike_count = rec.strikes
 
             # If 3 strikes reached: activate 24h ban across IP, MAC, Device, and Subnet!
             if max_strike_count >= MAX_STRIKES:

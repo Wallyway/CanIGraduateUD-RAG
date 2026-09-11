@@ -295,6 +295,7 @@ const CustomDivider: React.FC = () => (
 interface PromptInputBoxProps {
   onSend?: (message: string) => void;
   isLoading?: boolean;
+  disabled?: boolean;
   placeholder?: string;
   className?: string;
 }
@@ -303,14 +304,17 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
   const {
     onSend = () => {},
     isLoading = false,
+    disabled = false,
     placeholder = "Escribe tu consulta sobre modalidades, pasantías, paz y salvos...",
     className,
   } = props;
   const [input, setInput] = React.useState("");
   const promptBoxRef = React.useRef<HTMLDivElement>(null);
 
+  const isEffectivelyDisabled = isLoading || disabled;
+
   const handleSubmit = () => {
-    if (input.trim() && !isLoading) {
+    if (input.trim() && !isEffectivelyDisabled) {
       onSend(input.trim());
       setInput("");
     }
@@ -328,7 +332,7 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
         "w-full bg-transparent border-transparent shadow-none transition-all duration-300 ease-in-out",
         className
       )}
-      disabled={isLoading}
+      disabled={isEffectivelyDisabled}
       ref={ref || promptBoxRef}
     >
       <div className="transition-all duration-300">
@@ -339,20 +343,20 @@ export const PromptInputBox = React.forwardRef((props: PromptInputBoxProps, ref:
       </div>
 
       <PromptInputActions className="flex items-center justify-end p-0 pt-2">
-        <PromptInputAction tooltip={isLoading ? "Generando respuesta..." : "Enviar mensaje"}>
+        <PromptInputAction tooltip={isLoading ? "Generando respuesta..." : disabled ? "Entrada bloqueada temporalmente por seguridad" : "Enviar mensaje"}>
           <Button
             variant="default"
             size="icon"
             className={cn(
               "h-8 w-8 rounded-full transition-all duration-200",
-              hasContent && !isLoading
+              hasContent && !isEffectivelyDisabled
                 ? "bg-amber-400 hover:bg-amber-300 text-black shadow-[0_0_12px_rgba(251,191,36,0.5)] cursor-pointer active:scale-95"
                 : "bg-white/10 text-white/30 cursor-not-allowed"
             )}
             onClick={() => {
-              if (hasContent && !isLoading) handleSubmit();
+              if (hasContent && !isEffectivelyDisabled) handleSubmit();
             }}
-            disabled={!hasContent || isLoading}
+            disabled={!hasContent || isEffectivelyDisabled}
             type="button"
           >
             {isLoading ? (

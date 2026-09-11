@@ -80,10 +80,15 @@ class TestSecurityGuardrails(unittest.TestCase):
             self.assertIsNotNone(res.direct_response)
 
     def test_subnet_calculation(self):
-        """Tests that IP subnet calculation (/24 for IPv4, /64 for IPv6) operates correctly."""
-        self.assertEqual(calculate_subnet("192.168.1.45"), "192.168.1.0/24")
+        """Tests that IP subnet calculation (/24 for IPv4, /64 for IPv6) only groups global IPs, leaving private/loopback intact."""
+        # Private and loopback IPs must NOT be masked
+        self.assertEqual(calculate_subnet("192.168.1.45"), "192.168.1.45")
+        self.assertEqual(calculate_subnet("127.0.0.1"), "127.0.0.1")
+        self.assertEqual(calculate_subnet("172.18.0.1"), "172.18.0.1")
+        # Global IPv4 must be grouped into /24
         self.assertEqual(calculate_subnet("186.155.12.99"), "186.155.12.0/24")
-        self.assertIn("/64", calculate_subnet("2001:db8:abcd:0012::1"))
+        # Global IPv6 must be grouped into /64
+        self.assertEqual(calculate_subnet("2607:f8b0:4005:805::200e"), "2607:f8b0:4005:805::/64")
 
     def test_three_strikes_and_24h_ban(self):
         """Tests strike accumulation: Strike 1 warning -> Strike 2 warning -> Strike 3 24h ban."""
@@ -291,6 +296,247 @@ class TestSecurityGuardrails(unittest.TestCase):
         self.assertTrue(revoked)
         banned_after, _, _ = mgr.check_penalty(ip, subnet, device_id, mac)
         self.assertFalse(banned_after, "All linked keys should be unbanned")
+
+    def test_check_penalty_db_synchronization(self):
+        """Tests that an active ban recorded in PostgreSQL is synchronized into worker memory."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.models import Base, SecurityPenaltyLog
+        from datetime import datetime, timedelta
+
+        engine = create_engine('sqlite:///:memory:')
+        Base.metadata.create_all(bind=engine, tables=[SecurityPenaltyLog.__table__])
+        Session = sessionmaker(bind=engine)
+        db = Session()
+
+        ip = "190.25.10.77"
+        subnet = calculate_subnet(ip)
+        dev = "dev_sync_test"
+
+        # Worker 1 writes ban to DB
+        ban_log = SecurityPenaltyLog(
+            ip_address=ip,
+            subnet=subnet,
+            device_id=dev,
+            strike_count=3,
+            is_banned=True,
+            banned_until=datetime.utcnow() + timedelta(hours=24),
+            last_reason="Contenido inapropiado",
+            last_query="cuentame un cuento"
+        )
+        db.add(ban_log)
+        db.commit()
+
+        # Worker 2 has completely empty in-memory state
+        worker2_mgr = SecurityStrikeManager()
+        is_banned, remaining_sec, reason = worker2_mgr.check_penalty(ip, subnet, dev, db=db)
+
+        self.assertTrue(is_banned)
+        self.assertGreater(remaining_sec, 86000)
+        self.assertEqual(reason, "Contenido inapropiado")
+
+        # In-memory record on Worker 2 must now be synchronized
+        is_banned_cached, _, _ = worker2_mgr.check_penalty(ip, subnet, dev)
+        self.assertTrue(is_banned_cached, "Worker 2 must have synchronized memory cache")
+
+    def test_multi_worker_strike_accumulation_across_workers(self):
+        """Tests that strikes accumulate across isolated workers via PostgreSQL to trigger 24h ban on strike 3."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.models import Base, SecurityPenaltyLog
+
+        engine = create_engine('sqlite:///:memory:')
+        Base.metadata.create_all(bind=engine, tables=[SecurityPenaltyLog.__table__])
+        Session = sessionmaker(bind=engine)
+        db = Session()
+
+        ip = "190.25.10.88"
+        subnet = calculate_subnet(ip)
+        dev = "dev_multi_worker"
+        ua = "Browser"
+
+        # Worker 1 receives Strike 1
+        worker1 = SecurityStrikeManager()
+        res1 = worker1.record_strike(ip, subnet, dev, ua, "cuentame un cuento", "OFF_TOPIC", "cuento", db=db)
+        self.assertEqual(res1["strike_count"], 1)
+        self.assertFalse(res1["is_banned"])
+
+        # Worker 2 receives Strike 2 (starts with 0 strikes in memory)
+        worker2 = SecurityStrikeManager()
+        res2 = worker2.record_strike(ip, subnet, dev, ua, "hablame en chino", "OFF_TOPIC", "chino", db=db)
+        self.assertEqual(res2["strike_count"], 2)
+        self.assertFalse(res2["is_banned"])
+
+        # Worker 3 receives Strike 3 (starts with 0 strikes in memory) -> BAN ACTIVATED!
+        worker3 = SecurityStrikeManager()
+        res3 = worker3.record_strike(ip, subnet, dev, ua, "necesito novia", "OFF_TOPIC", "novia", db=db)
+        self.assertEqual(res3["strike_count"], 3)
+        self.assertTrue(res3["is_banned"])
+        self.assertEqual(res3["remaining_seconds"], PENALTY_DURATION_SECONDS)
+
+        # Worker 4 checks penalty via Gate 1 -> recognized as banned!
+        worker4 = SecurityStrikeManager()
+        is_banned, rem, reason = worker4.check_penalty(ip, subnet, dev, db=db)
+        self.assertTrue(is_banned)
+        self.assertGreater(rem, 86000)
+        self.assertEqual(reason, "novia")
+
+    def test_ban_status_endpoint(self):
+        """Tests GET /api/v1/chat/ban-status returns accurate ban status."""
+        from fastapi.testclient import TestClient
+        from fastapi import FastAPI
+        from app.api.v1 import chat
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.models import Base, SecurityPenaltyLog
+        from app.db.session import get_db
+
+        engine = create_engine('sqlite:///:memory:')
+        Base.metadata.create_all(bind=engine, tables=[SecurityPenaltyLog.__table__])
+        Session = sessionmaker(bind=engine)
+
+        test_app = FastAPI()
+        test_app.include_router(chat.router, prefix="/api/v1/chat")
+
+        def override_get_db():
+            db = Session()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        test_app.dependency_overrides[get_db] = override_get_db
+        client = TestClient(test_app)
+
+        test_ip = "190.25.99.1"
+
+        # Test unbanned client
+        res = client.get("/api/v1/chat/ban-status", headers={"cf-connecting-ip": test_ip})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertFalse(data["is_banned"])
+        self.assertEqual(data["remaining_seconds"], 0)
+
+        # Ban client via strike_manager
+        chat.strike_manager.record_strike(
+            ip=test_ip,
+            subnet=calculate_subnet(test_ip),
+            device_id=None,
+            user_agent="Test",
+            query="strike 1",
+            violation_type="OFF_TOPIC",
+            reason="Test strike",
+        )
+        chat.strike_manager.record_strike(
+            ip=test_ip,
+            subnet=calculate_subnet(test_ip),
+            device_id=None,
+            user_agent="Test",
+            query="strike 2",
+            violation_type="OFF_TOPIC",
+            reason="Test strike",
+        )
+        res_ban = chat.strike_manager.record_strike(
+            ip=test_ip,
+            subnet=calculate_subnet(test_ip),
+            device_id=None,
+            user_agent="Test",
+            query="strike 3",
+            violation_type="OFF_TOPIC",
+            reason="Abuso reiterado",
+        )
+        self.assertTrue(res_ban["is_banned"])
+
+        # Now GET /ban-status should report is_banned == True
+        res_after = client.get("/api/v1/chat/ban-status", headers={"cf-connecting-ip": test_ip})
+        self.assertEqual(res_after.status_code, 200)
+        data_after = res_after.json()
+        self.assertTrue(data_after["is_banned"])
+        self.assertGreater(data_after["remaining_seconds"], 86000)
+        self.assertEqual(data_after["reason"], "Abuso reiterado")
+
+        # Cleanup
+        chat.strike_manager.revoke_penalty(test_ip)
+
+    def test_chat_stream_ban_sse_events(self):
+        """Tests that Gate 3 and Gate 1 in /chat/stream emit security_ban SSE event and headers."""
+        from fastapi.testclient import TestClient
+        from fastapi import FastAPI
+        from app.api.v1 import chat
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.models import Base, SecurityPenaltyLog
+        from app.db.session import get_db
+
+        engine = create_engine('sqlite:///:memory:')
+        Base.metadata.create_all(bind=engine, tables=[SecurityPenaltyLog.__table__])
+        Session = sessionmaker(bind=engine)
+
+        test_app = FastAPI()
+        test_app.include_router(chat.router, prefix="/api/v1/chat")
+
+        def override_get_db():
+            db = Session()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        test_app.dependency_overrides[get_db] = override_get_db
+        client = TestClient(test_app)
+
+        test_ip = "190.25.99.2"
+        headers = {"cf-connecting-ip": test_ip}
+
+        # Strike 1: "cuentame un cuento"
+        res1 = client.post("/api/v1/chat/stream", json={"query": "cuéntame un cuento", "history": []}, headers=headers)
+        self.assertEqual(res1.status_code, 200)
+        self.assertEqual(res1.headers.get("X-Security-Strike"), "1")
+        self.assertEqual(res1.headers.get("X-Security-Banned"), "false")
+
+        # Strike 2: "hablame en chino"
+        res2 = client.post("/api/v1/chat/stream", json={"query": "háblame en chino", "history": []}, headers=headers)
+        self.assertEqual(res2.status_code, 200)
+        self.assertEqual(res2.headers.get("X-Security-Strike"), "2")
+        self.assertEqual(res2.headers.get("X-Security-Banned"), "false")
+
+        # Strike 3: "necesito novia" -> Gate 3 bans!
+        res3 = client.post("/api/v1/chat/stream", json={"query": "necesito novia", "history": []}, headers=headers)
+        self.assertEqual(res3.status_code, 403)
+        self.assertEqual(res3.headers.get("X-Security-Strike"), "3")
+        self.assertEqual(res3.headers.get("X-Security-Banned"), "true")
+        self.assertIn("Retry-After", res3.headers)
+        body3 = res3.text
+        self.assertIn('"type": "security_ban"', body3)
+        self.assertIn('"banned": true', body3)
+
+        # Gate 1 Active Ban: 4th request must be immediately rejected at Gate 1
+        res4 = client.post("/api/v1/chat/stream", json={"query": "¿Cuáles son las modalidades de grado?", "history": []}, headers=headers)
+        self.assertEqual(res4.status_code, 403)
+        self.assertEqual(res4.headers.get("X-Security-Banned"), "true")
+        self.assertIn("Retry-After", res4.headers)
+        self.assertIn("X-Security-Reason", res4.headers)
+        body4 = res4.text
+        self.assertIn('"type": "security_ban"', body4)
+        self.assertIn('"banned": true', body4)
+
+        # Cleanup
+        chat.strike_manager.revoke_penalty(test_ip)
+
+    def test_already_banned_record_strike_does_not_exceed_max_strikes(self):
+        """Tests that record_strike on an already banned client returns the active ban without exceeding 3 strikes."""
+        mgr = SecurityStrikeManager()
+        ip = "190.25.77.10"
+        sub = calculate_subnet(ip)
+
+        for i in range(3):
+            mgr.record_strike(ip, sub, None, "UA", "cuentame un cuento", "OFF_TOPIC", "cuento")
+
+        # 4th strike attempt while already banned
+        res4 = mgr.record_strike(ip, sub, None, "UA", "cuentame otro cuento", "OFF_TOPIC", "otro cuento")
+        self.assertTrue(res4["is_banned"])
+        self.assertEqual(res4["strike_count"], 3, "Strike count must not exceed 3 when already banned")
+        self.assertLessEqual(res4["remaining_seconds"], PENALTY_DURATION_SECONDS)
 
 
 if __name__ == "__main__":

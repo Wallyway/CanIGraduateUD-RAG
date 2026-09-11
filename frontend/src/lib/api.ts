@@ -39,6 +39,32 @@ function getAuthHeaders(): HeadersInit {
   };
 }
 
+export async function checkBanStatus(): Promise<{
+  is_banned: boolean;
+  remaining_seconds: number;
+  reason?: string;
+  ip?: string;
+  error?: boolean;
+}> {
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/chat/ban-status`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Device-Id": getDeviceId(),
+        "X-MAC-Address": getClientMac(),
+      },
+    });
+    if (!response.ok) {
+      return { is_banned: false, remaining_seconds: 0, error: true };
+    }
+    const data = await response.json();
+    return { ...data, error: false };
+  } catch {
+    return { is_banned: false, remaining_seconds: 0, error: true };
+  }
+}
+
 export async function streamChat(
   query: string,
   history: Array<{ role: string; content: string }>,
@@ -46,7 +72,8 @@ export async function streamChat(
   onCitations: (citations: any[]) => void,
   onDone: () => void,
   onError: (err: any) => void,
-  onQueue?: (data: { position: number; estimated_seconds: number }) => void
+  onQueue?: (data: { position: number; estimated_seconds: number }) => void,
+  onBanned?: (data: { remaining_seconds: number; reason: string }) => void
 ) {
   try {
     const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
@@ -59,10 +86,44 @@ export async function streamChat(
       body: JSON.stringify({ query, history }),
     });
 
+    const isBannedHeader = response.headers.get("X-Security-Banned") === "true";
+    const retryAfterHeader = parseInt(response.headers.get("Retry-After") || "0", 10);
+    const reasonHeader = response.headers.get("X-Security-Reason");
+    let headerReason = "Infracción reiterada de políticas de seguridad";
+    if (reasonHeader) {
+      try {
+        headerReason = decodeURIComponent(reasonHeader);
+      } catch {
+        headerReason = reasonHeader;
+      }
+    }
+
+    if ((response.status === 403 || isBannedHeader) && onBanned) {
+      const remainingSec = retryAfterHeader > 0 ? retryAfterHeader : 86400;
+      const banUntil = Date.now() + remainingSec * 1000;
+      localStorage.setItem("ud_banned_until", banUntil.toString());
+      localStorage.setItem("ud_banned_reason", headerReason);
+      onBanned({
+        remaining_seconds: remainingSec,
+        reason: headerReason,
+      });
+    }
+
     const isSse = (response.headers.get("content-type") || "").includes("text/event-stream");
 
     if (!response.ok && !isSse) {
       const errData = await response.json().catch(() => ({}));
+      if (response.status === 403 && onBanned) {
+        const remainingSec = retryAfterHeader > 0 ? retryAfterHeader : 86400;
+        const banUntil = Date.now() + remainingSec * 1000;
+        const finalReason = errData.detail || headerReason;
+        localStorage.setItem("ud_banned_until", banUntil.toString());
+        localStorage.setItem("ud_banned_reason", finalReason);
+        onBanned({
+          remaining_seconds: remainingSec,
+          reason: finalReason,
+        });
+      }
       throw new Error(errData.detail || `HTTP error! status: ${response.status}`);
     }
 
@@ -104,6 +165,15 @@ export async function streamChat(
               onToken(parsed.content);
             } else if (parsed.type === "citations" && parsed.citations) {
               onCitations(parsed.citations);
+            } else if (parsed.type === "security_ban") {
+              const remaining = Number(parsed.remaining_seconds) || 86400;
+              const reason = parsed.reason || "Infracción reiterada de políticas de seguridad";
+              const banUntil = Date.now() + remaining * 1000;
+              localStorage.setItem("ud_banned_until", banUntil.toString());
+              localStorage.setItem("ud_banned_reason", reason);
+              if (onBanned) {
+                onBanned({ remaining_seconds: remaining, reason });
+              }
             } else if (parsed.type === "queue" && onQueue) {
               onQueue({
                 position: Number(parsed.position) || 1,

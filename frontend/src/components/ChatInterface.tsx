@@ -16,13 +16,22 @@ import {
   Github,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { streamChat, getDocumentPdfUrl, sendSessionFeedback } from "@/lib/api";
+import { streamChat, getDocumentPdfUrl, sendSessionFeedback, checkBanStatus } from "@/lib/api";
 import {
   ChatMessage,
   getStoredChatHistory,
   saveStoredChatHistory,
   clearStoredChatHistory,
 } from "@/lib/storage";
+
+function formatCountdown(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
 import { CitationBadge } from "./CitationBadge";
 import { MoltenMetal } from "./MoltenMetal";
 import PromptInputBox from "./ui/ai-prompt-box";
@@ -151,6 +160,11 @@ export const ChatInterface: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
   const [queueInfo, setQueueInfo] = useState<{ position: number; estimated_seconds: number } | null>(null);
+  const [banState, setBanState] = useState<{
+    isBanned: boolean;
+    remainingSeconds: number;
+    reason?: string;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isHeroState = messages.length === 0;
 
@@ -207,6 +221,82 @@ export const ChatInterface: React.FC = () => {
       document.body.style.height = "";
     };
   }, [isHeroState]);
+
+  // Check ban status on mount from localStorage and backend
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // 1. Immediate fast check from localStorage
+    const storedBannedUntil = localStorage.getItem("ud_banned_until");
+    const storedReason = localStorage.getItem("ud_banned_reason") || undefined;
+    if (storedBannedUntil) {
+      const banUntilMs = parseInt(storedBannedUntil, 10);
+      const nowMs = Date.now();
+      const remainingSec = Math.max(0, Math.ceil((banUntilMs - nowMs) / 1000));
+      if (remainingSec > 0) {
+        setBanState({
+          isBanned: true,
+          remainingSeconds: remainingSec,
+          reason: storedReason,
+        });
+      } else {
+        localStorage.removeItem("ud_banned_until");
+        localStorage.removeItem("ud_banned_reason");
+      }
+    }
+
+    // 2. Authoritative check with backend /ban-status
+    checkBanStatus()
+      .then((status) => {
+        // If the request failed due to network or server error, preserve existing ban from localStorage
+        if (status.error) {
+          return;
+        }
+        if (status.is_banned && status.remaining_seconds > 0) {
+          const banUntilMs = Date.now() + status.remaining_seconds * 1000;
+          localStorage.setItem("ud_banned_until", banUntilMs.toString());
+          if (status.reason) {
+            localStorage.setItem("ud_banned_reason", status.reason);
+          }
+          setBanState({
+            isBanned: true,
+            remainingSeconds: status.remaining_seconds,
+            reason: status.reason,
+          });
+        } else if (!status.is_banned) {
+          // Explicit authoritative unban from backend
+          localStorage.removeItem("ud_banned_until");
+          localStorage.removeItem("ud_banned_reason");
+          setBanState(null);
+        }
+      })
+      .catch(() => {
+        // Fallback to localStorage on network disconnect
+      });
+  }, []);
+
+  // Active ban countdown timer (1-second tick)
+  useEffect(() => {
+    if (!banState?.isBanned || banState.remainingSeconds <= 0) return;
+
+    const intervalId = setInterval(() => {
+      setBanState((prev) => {
+        if (!prev || !prev.isBanned) return null;
+        const nextRemaining = prev.remainingSeconds - 1;
+        if (nextRemaining <= 0) {
+          localStorage.removeItem("ud_banned_until");
+          localStorage.removeItem("ud_banned_reason");
+          return null;
+        }
+        return {
+          ...prev,
+          remainingSeconds: nextRemaining,
+        };
+      });
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [banState?.isBanned]);
 
   useEffect(() => {
     const stored = getStoredChatHistory();
@@ -274,7 +364,7 @@ export const ChatInterface: React.FC = () => {
 
   const handleSend = async (queryText: string) => {
     const text = queryText.trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || Boolean(banState?.isBanned)) return;
 
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
@@ -401,16 +491,23 @@ export const ChatInterface: React.FC = () => {
         setIsLoading(false);
         setActiveAssistantId(null);
         setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantMsgId
-              ? {
-                  ...msg,
-                  content:
-                    currentResponseText +
-                    "\n\n*(Hubo un inconveniente temporal conectando con el servidor. Por favor verifica que el backend esté en ejecución).*",
-                }
-              : msg
-          )
+          prev.map((msg) => {
+            if (msg.id !== assistantMsgId) return msg;
+            if (banState?.isBanned) {
+              return {
+                ...msg,
+                content:
+                  currentResponseText ||
+                  "🚫 **Acceso Suspendido:** Has acumulado 3 infracciones por consultas fuera del ámbito académico. El acceso se encuentra suspendido temporalmente durante 24 horas.",
+              };
+            }
+            return {
+              ...msg,
+              content:
+                currentResponseText +
+                "\n\n*(Hubo un inconveniente temporal conectando con el servidor. Por favor verifica que el backend esté en ejecución).*",
+            };
+          })
         );
       },
       (queueData) => {
@@ -419,11 +516,19 @@ export const ChatInterface: React.FC = () => {
         } else {
           setQueueInfo(null);
         }
+      },
+      (banData) => {
+        setBanState({
+          isBanned: true,
+          remainingSeconds: banData.remaining_seconds,
+          reason: banData.reason,
+        });
       }
     );
   };
 
   const handleStartNewSession = () => {
+    // Preserve active ban state across session resets
     clearStoredChatHistory();
     setMessages([]);
     if (typeof window !== "undefined") {
@@ -474,6 +579,53 @@ export const ChatInterface: React.FC = () => {
     } finally {
       setFeedbackSubmitting(false);
     }
+  };
+
+  const renderSecurityBanBanner = () => {
+    if (!banState?.isBanned) return null;
+    return (
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: -10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: -10 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+        className="w-full my-3 z-30 select-none text-left"
+      >
+        <div className="relative overflow-hidden rounded-2xl border-2 border-red-500/80 bg-red-950/90 p-4 sm:p-5 backdrop-blur-2xl shadow-[0_0_50px_rgba(239,68,68,0.4)] text-white">
+          {/* Ambient red glow */}
+          <div className="absolute -top-12 -right-12 w-44 h-44 bg-red-500/25 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-12 -left-12 w-44 h-44 bg-red-600/20 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center gap-3.5 sm:gap-4">
+            <div className="size-11 sm:size-12 rounded-2xl bg-red-600/30 border border-red-500/60 flex items-center justify-center text-xl sm:text-2xl shrink-0 shadow-[0_0_20px_rgba(239,68,68,0.5)]">
+              🔒
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm sm:text-base font-bold text-red-100 tracking-tight flex items-center gap-2">
+                  <span>Acceso Suspendido por 24 Horas</span>
+                </h3>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/70 border border-red-500/60 text-red-300 font-mono text-xs font-bold tabular-nums shadow-inner">
+                  <span className="inline-block size-2 rounded-full bg-red-500 animate-pulse" />
+                  <span>Tiempo restante: {formatCountdown(banState.remainingSeconds)}</span>
+                </div>
+              </div>
+              <p className="mt-1.5 text-xs sm:text-[13px] text-red-200/90 leading-relaxed">
+                Has acumulado 3 infracciones por consultas no relacionadas con la Universidad Distrital o normativas académicas.
+                {banState.reason && (
+                  <span className="block mt-1 font-mono text-xs text-red-300/80">
+                    Motivo: {banState.reason}
+                  </span>
+                )}
+              </p>
+              <div className="mt-2.5 pt-2 border-t border-red-500/25 flex items-center gap-2 text-[11px] sm:text-xs text-red-300/75 font-medium">
+                <span>🛡️ El envío de preguntas y selección de sugerencias están temporalmente deshabilitados durante la suspensión.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    );
   };
 
   return (
@@ -618,6 +770,9 @@ export const ChatInterface: React.FC = () => {
               </p>
             </motion.div>
 
+            {/* Red Glassmorphism Security Banner (Active ban) */}
+            {renderSecurityBanBanner()}
+
             {/* Centered Prompt Input Box */}
             <motion.div
               initial={{ opacity: 0, scale: 0.97 }}
@@ -625,11 +780,18 @@ export const ChatInterface: React.FC = () => {
               transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
               className="w-full"
             >
-              <div className="rounded-3xl border border-white/15 bg-neutral-900/30 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.3)] overflow-hidden transition-all duration-300 hover:border-white/25">
+              <div className={`rounded-3xl border bg-neutral-900/30 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.3)] overflow-hidden transition-all duration-300 ${
+                banState?.isBanned ? "border-red-500/50 opacity-80" : "border-white/15 hover:border-white/25"
+              }`}>
                 <PromptInputBox
                   onSend={(message) => handleSend(message)}
                   isLoading={isLoading}
-                  placeholder="Escribe tu consulta sobre modalidades, pasantías, paz y salvos..."
+                  disabled={isLoading || Boolean(banState?.isBanned)}
+                  placeholder={
+                    banState?.isBanned
+                      ? "Acceso suspendido temporalmente por acumulación de strikes..."
+                      : "Escribe tu consulta sobre modalidades, pasantías, paz y salvos..."
+                  }
                   className="bg-transparent border-0 shadow-none text-white"
                 />
               </div>
@@ -651,7 +813,12 @@ export const ChatInterface: React.FC = () => {
                   <button
                     key={i}
                     onClick={() => handleSend(sug.full)}
-                    className="text-[11.5px] sm:text-xs px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-white/[0.04] hover:bg-white/[0.09] text-neutral-300 hover:text-white border border-white/10 hover:border-white/20 transition-all duration-200 shadow-sm backdrop-blur-md active:scale-95 text-center cursor-pointer"
+                    disabled={isLoading || Boolean(banState?.isBanned)}
+                    className={`text-[11.5px] sm:text-xs px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border transition-all duration-200 shadow-sm backdrop-blur-md text-center ${
+                      banState?.isBanned
+                        ? "bg-red-950/20 text-neutral-500 border-red-500/20 opacity-40 cursor-not-allowed pointer-events-none"
+                        : "bg-white/[0.04] hover:bg-white/[0.09] text-neutral-300 hover:text-white border-white/10 hover:border-white/20 active:scale-95 cursor-pointer"
+                    }`}
                     title={sug.full}
                   >
                     <span className="sm:hidden">{sug.label}</span>
@@ -764,13 +931,19 @@ export const ChatInterface: React.FC = () => {
                             <div className="mt-2.5">
                               <button
                                 onClick={() => {
+                                  if (banState?.isBanned) return;
                                   const idx = messages.findIndex((m) => m.id === msg.id);
                                   const prevUserMsg = idx > 0 ? messages[idx - 1] : null;
                                   if (prevUserMsg && prevUserMsg.role === "user" && prevUserMsg.content) {
                                     handleSend(prevUserMsg.content);
                                   }
                                 }}
-                                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-medium transition-all shadow-sm active:scale-95 cursor-pointer"
+                                disabled={Boolean(banState?.isBanned)}
+                                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all shadow-sm ${
+                                  banState?.isBanned
+                                    ? "bg-red-950/20 text-neutral-500 border-red-500/20 opacity-40 cursor-not-allowed pointer-events-none"
+                                    : "bg-amber-500/15 hover:bg-amber-500/25 border-amber-500/30 text-amber-300 active:scale-95 cursor-pointer"
+                                }`}
                               >
                                 <span>🔄</span>
                                 <span>Reintentar consulta con 1 clic</span>
@@ -830,11 +1003,19 @@ export const ChatInterface: React.FC = () => {
       {!isHeroState && (
         <footer className="sticky bottom-0 z-30 bg-transparent p-4 md:p-5 pointer-events-none">
           <div className="max-w-3xl mx-auto w-full pointer-events-auto">
-            <div className="rounded-3xl border border-white/15 bg-neutral-900/30 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.3)] overflow-hidden transition-all duration-300 hover:border-white/25">
+            {renderSecurityBanBanner()}
+            <div className={`rounded-3xl border bg-neutral-900/30 backdrop-blur-xl shadow-[0_12px_40px_rgba(0,0,0,0.3)] overflow-hidden transition-all duration-300 ${
+              banState?.isBanned ? "border-red-500/50 opacity-80" : "border-white/15 hover:border-white/25"
+            }`}>
               <PromptInputBox
                 onSend={(message) => handleSend(message)}
                 isLoading={isLoading}
-                placeholder="Pregunta sobre modalidades, requisitos de grado, pasantía..."
+                disabled={isLoading || Boolean(banState?.isBanned)}
+                placeholder={
+                  banState?.isBanned
+                    ? "Acceso suspendido temporalmente por acumulación de strikes..."
+                    : "Pregunta sobre modalidades, requisitos de grado, pasantía..."
+                }
                 className="bg-transparent border-0 shadow-none text-white"
               />
             </div>

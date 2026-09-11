@@ -116,6 +116,30 @@ def classify_topic(query: str) -> str:
         return "Plan de Estudios"
     return "Normativa General"
 
+@router.get("/ban-status")
+def get_ban_status(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Checks whether the requesting client (by IP, MAC, Device ID, Subnet) is currently banned.
+    """
+    client_info = extract_client_info(request)
+    client_ip = client_info["ip"]
+    subnet = client_info["subnet"]
+    device_id = client_info["device_id"]
+    client_mac = client_info["mac"]
+
+    is_banned, remaining_seconds, ban_reason = strike_manager.check_penalty(
+        client_ip, subnet, device_id, client_mac, db=db
+    )
+    return {
+        "is_banned": is_banned,
+        "remaining_seconds": remaining_seconds,
+        "reason": ban_reason,
+        "ip": client_ip,
+    }
+
 @router.post("/stream")
 def stream_chat_response(
     request: Request,
@@ -138,7 +162,7 @@ def stream_chat_response(
 
     # 2. Gate 1: Check Active 24-Hour Ban
     is_banned, remaining_seconds, ban_reason = strike_manager.check_penalty(
-        client_ip, subnet, device_id, client_mac
+        client_ip, subnet, device_id, client_mac, db=db
     )
     if is_banned:
         hours = remaining_seconds // 3600
@@ -151,6 +175,7 @@ def stream_chat_response(
             f"🔒 *Esta restricción previene el consumo desmedido de tokens de la Universidad Distrital.*"
         )
         def banned_stream():
+            yield f"data: {json.dumps({'type': 'security_ban', 'banned': True, 'remaining_seconds': remaining_seconds, 'reason': ban_reason}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'token', 'content': ban_msg}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
@@ -164,7 +189,8 @@ def stream_chat_response(
                 "Connection": "keep-alive",
                 "Content-Type": "text/event-stream",
                 "X-Security-Banned": "true",
-                "Retry-After": str(remaining_seconds)
+                "Retry-After": str(remaining_seconds),
+                "X-Security-Reason": urllib.parse.quote(str(ban_reason or "Infracción reiterada"))
             }
         )
 
@@ -223,21 +249,28 @@ def stream_chat_response(
             for i, w in enumerate(words):
                 chunk = w if i == len(words) - 1 else w + " "
                 yield f"data: {json.dumps({'type': 'token', 'content': chunk}, ensure_ascii=False)}\n\n"
+            if strike_result["is_banned"]:
+                yield f"data: {json.dumps({'type': 'security_ban', 'banned': True, 'remaining_seconds': strike_result.get('remaining_seconds', 86400), 'reason': strike_result.get('reason', safety_check.violation_reason)}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
 
         resp_status = status.HTTP_403_FORBIDDEN if strike_result["is_banned"] else status.HTTP_200_OK
+        headers = {
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+            "X-Security-Strike": str(strike_result["strike_count"]),
+            "X-Security-Banned": "true" if strike_result["is_banned"] else "false"
+        }
+        if strike_result["is_banned"]:
+            headers["Retry-After"] = str(strike_result.get("remaining_seconds", 86400))
+            headers["X-Security-Reason"] = urllib.parse.quote(str(strike_result.get("reason", "") or safety_check.violation_reason or "Infracción reiterada"))
+
         return StreamingResponse(
             strike_stream(),
             media_type="text/event-stream",
             status_code=resp_status,
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "text/event-stream",
-                "X-Security-Strike": str(strike_result["strike_count"]),
-                "X-Security-Banned": "true" if strike_result["is_banned"] else "false"
-            }
+            headers=headers
         )
 
     # 5. Gate 4: Fast Greeting & Orientation (0 Tokens!)
