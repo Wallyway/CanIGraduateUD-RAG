@@ -537,9 +537,12 @@ export const ChatInterface: React.FC = () => {
               className="h-8 sm:h-9 md:h-10 w-auto object-contain drop-shadow-sm -translate-y-1 sm:-translate-y-1.5 md:-translate-y-2"
             />
           </button>
-          <span className="hidden lg:inline-block text-[10px] font-medium text-neutral-400 border border-white/10 bg-white/[0.04] px-2 py-0.5 rounded-full">
-            Sistemas UD
-          </span>
+          <div className="hidden sm:flex items-center gap-2 select-none -translate-y-0.5 sm:-translate-y-1">
+            <span className="h-3 w-px bg-white/20" />
+            <span className="text-[10px] sm:text-[11px] font-mono font-semibold tracking-[0.22em] uppercase text-transparent bg-clip-text bg-gradient-to-r from-neutral-200 via-neutral-100 to-neutral-400 drop-shadow-sm">
+              Beta
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
@@ -628,8 +631,9 @@ export const ChatInterface: React.FC = () => {
                     width={180}
                     height={135}
                     priority
-                    className="h-8 sm:h-12 md:h-14 w-auto object-contain drop-shadow-sm select-none -translate-y-0.5 sm:-translate-y-1"
+                    className="h-10 sm:h-14 md:h-16 w-auto object-contain drop-shadow-sm select-none -translate-y-0.5 sm:-translate-y-1"
                   />
+                  <span className="select-none ml-1 sm:ml-1.5">?</span>
                 </span>
               </h1>
               <p className="text-xs sm:text-base text-neutral-400 max-w-md mx-auto leading-relaxed font-normal">
