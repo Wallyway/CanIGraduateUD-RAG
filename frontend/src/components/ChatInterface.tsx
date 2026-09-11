@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   Sparkles,
   RotateCcw,
-  GraduationCap,
   HelpCircle,
   MessageSquareHeart,
   Send,
@@ -493,8 +493,15 @@ export const ChatInterface: React.FC = () => {
       {/* Recessed Apple UI Chrome Navbar (Locked / Sticky top-0 for seamless chat scrolling) */}
       <header className="sticky top-0 z-40 h-14 border-b border-white/[0.08] bg-black/70 sm:bg-black/50 backdrop-blur-2xl px-4 sm:px-8 flex items-center justify-between transition-all duration-300">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-b from-neutral-800 to-neutral-900 border border-white/10 flex items-center justify-center text-amber-400 shadow-inner">
-            <GraduationCap className="w-4 h-4" />
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-b from-neutral-800 to-neutral-900 border border-white/10 flex items-center justify-center shadow-inner overflow-hidden p-1 shrink-0">
+            <Image
+              src="/images/logo-ud-header.png"
+              alt="Logo Universidad Distrital"
+              width={26}
+              height={26}
+              priority
+              className="w-full h-full object-contain"
+            />
           </div>
           <div className="flex items-center gap-2">
             <span className="font-semibold text-sm tracking-tight text-white">
@@ -554,11 +561,6 @@ export const ChatInterface: React.FC = () => {
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
               className="text-center mb-4 sm:mb-8 w-full"
             >
-              {/* Category Pill */}
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.05] border border-white/10 text-neutral-300 text-[11px] sm:text-xs font-medium tracking-wide mb-2 sm:mb-4 shadow-sm backdrop-blur-xl">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                Facultad de Ingeniería • Universidad Distrital
-              </div>
 
               {/* Title & Headline */}
               <h1 className="text-3xl sm:text-5xl md:text-6xl font-semibold tracking-tight text-white mb-2 sm:mb-3">
@@ -619,8 +621,14 @@ export const ChatInterface: React.FC = () => {
             {/* Active Session Top Bar with Quick "Nueva sesión" Action */}
             <div className="flex items-center justify-between gap-3 p-3 sm:p-4 rounded-2xl bg-neutral-900/60 border border-white/10 backdrop-blur-xl mb-6 shadow-sm">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
-                  <GraduationCap className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center shrink-0 overflow-hidden p-1">
+                  <Image
+                    src="/images/logo-ud-header.png"
+                    alt="Logo Universidad Distrital"
+                    width={26}
+                    height={26}
+                    className="w-full h-full object-contain"
+                  />
                 </div>
                 <div className="min-w-0">
                   <div className="text-xs sm:text-sm font-semibold text-white tracking-tight flex items-center gap-2">

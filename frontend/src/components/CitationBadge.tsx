@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { BookOpen, FileText, X, ExternalLink } from "lucide-react";
+import Image from "next/image";
+import { X, ExternalLink } from "lucide-react";
 import { getDocumentPdfUrl } from "@/lib/api";
 
 interface Citation {
@@ -61,7 +62,13 @@ export const CitationBadge: React.FC<CitationBadgeProps> = ({ citation }) => {
           className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-amber-300/90 hover:text-amber-200 transition-colors cursor-pointer"
           title="Ver fragmento oficial y detalles"
         >
-          <BookOpen className="w-3 h-3 text-amber-400 shrink-0" />
+          <Image
+            src="/images/logo-ud-citation.png"
+            alt="Logo UD"
+            width={14}
+            height={14}
+            className="w-3.5 h-3.5 object-contain shrink-0"
+          />
           <span className="truncate max-w-[170px] sm:max-w-[220px]">
             {citation.resolution || citation.title} {citation.article ? `• ${citation.article}` : ""}
           </span>
@@ -96,8 +103,14 @@ export const CitationBadge: React.FC<CitationBadgeProps> = ({ citation }) => {
             {/* Modal Header - Pinned at top */}
             <div className="flex items-center justify-between gap-3 px-5 pt-2 pb-3.5 sm:px-6 sm:pt-5 sm:pb-4 border-b border-white/10 shrink-0">
               <div className="flex items-center gap-2.5 text-amber-400 min-w-0">
-                <div className="p-1.5 rounded-lg bg-amber-400/10 border border-amber-400/20 shrink-0">
-                  <FileText className="w-4 h-4 text-amber-400" />
+                <div className="w-7 h-7 rounded-lg bg-amber-400/10 border border-amber-400/20 flex items-center justify-center shrink-0 p-1">
+                  <Image
+                    src="/images/logo-ud-citation.png"
+                    alt="Logo UD"
+                    width={18}
+                    height={18}
+                    className="w-full h-full object-contain"
+                  />
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-semibold text-white text-sm md:text-base tracking-tight truncate">
