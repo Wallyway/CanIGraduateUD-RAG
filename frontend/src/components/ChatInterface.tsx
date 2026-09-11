@@ -530,9 +530,9 @@ export const ChatInterface: React.FC = () => {
               className="h-8 sm:h-9 md:h-10 w-auto object-contain drop-shadow-sm -translate-y-1 sm:-translate-y-1.5 md:-translate-y-2"
             />
           </button>
-          <div className="hidden sm:flex items-center gap-2 select-none -translate-y-0.5 sm:-translate-y-1">
-            <span className="h-3 w-px bg-white/20" />
-            <span className="text-[10px] sm:text-[11px] font-mono font-semibold tracking-[0.22em] uppercase text-transparent bg-clip-text bg-gradient-to-r from-neutral-200 via-neutral-100 to-neutral-400 drop-shadow-sm">
+          <div className="flex items-center gap-1.5 sm:gap-2 select-none -translate-y-0.5 sm:-translate-y-1">
+            <span className="h-2.5 sm:h-3 w-px bg-white/20" />
+            <span className="text-[9px] sm:text-[11px] font-mono font-semibold tracking-[0.18em] sm:tracking-[0.22em] uppercase text-transparent bg-clip-text bg-gradient-to-r from-neutral-200 via-neutral-100 to-neutral-400 drop-shadow-sm">
               Beta
             </span>
           </div>
