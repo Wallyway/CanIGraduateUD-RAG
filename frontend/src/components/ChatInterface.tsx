@@ -13,6 +13,7 @@ import {
   X,
   Star,
   Mail,
+  Plus,
   Github,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -691,6 +692,17 @@ export const ChatInterface: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          {messages.length > 0 && (
+            <button
+              onClick={handleStartNewSession}
+              disabled={Boolean(banState?.isBanned)}
+              title="Comenzar una nueva sesión y volver al menú principal"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-full border border-amber-500/30 transition-all duration-200 active:scale-95 backdrop-blur-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline sm:inline">Nueva sesión</span>
+            </button>
+          )}
           {messages.length > 0 && (
             <button
               onClick={() => {
