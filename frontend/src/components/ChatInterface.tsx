@@ -504,11 +504,16 @@ export const ChatInterface: React.FC = () => {
               className="w-9 h-9 sm:w-10 sm:h-10 object-contain drop-shadow-sm transition-transform duration-200 hover:scale-105"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-sm tracking-tight text-white">
-              Can I Graduate UD
-            </span>
-            <span className="hidden sm:inline-block text-[11px] font-medium text-neutral-400 border border-white/10 bg-white/[0.04] px-2 py-0.5 rounded-full">
+          <div className="flex items-center gap-2.5">
+            <Image
+              src="/images/logo-canigraduateud-header.png"
+              alt="Can I Graduate UD"
+              width={120}
+              height={36}
+              priority
+              className="h-6 sm:h-7 w-auto object-contain drop-shadow-sm transition-transform duration-200 hover:scale-[1.02]"
+            />
+            <span className="hidden md:inline-block text-[11px] font-medium text-neutral-400 border border-white/10 bg-white/[0.04] px-2 py-0.5 rounded-full">
               Sistemas UD
             </span>
           </div>
