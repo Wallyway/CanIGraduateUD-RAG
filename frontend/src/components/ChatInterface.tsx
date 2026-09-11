@@ -777,7 +777,7 @@ export const ChatInterface: React.FC = () => {
                 </span>
               </h1>
               <p className="text-xs sm:text-base text-neutral-400 max-w-md sm:max-w-lg mx-auto leading-relaxed font-normal">
-                Saber cómo graduarte debería ser fácil. Encontrar la respuesta, también.
+                Saber cómo graduarte debería ser fácil. Encontrar la respuesta, también. Porque nadie debería perderse al final de su carrera.
               </p>
             </motion.div>
 
