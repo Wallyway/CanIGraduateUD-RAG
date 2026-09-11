@@ -492,16 +492,22 @@ export const ChatInterface: React.FC = () => {
       </div>
 
       {/* Recessed Apple UI Chrome Navbar (Locked / Sticky top-0 for seamless chat scrolling) */}
-      <header className="sticky top-0 z-40 h-15 sm:h-16 border-b border-white/[0.08] bg-black/70 sm:bg-black/50 backdrop-blur-2xl px-4 sm:px-8 flex items-center justify-between transition-all duration-300">
-        <div className="flex items-center gap-2.5">
-          <Image
-            src="/images/logo-canigraduateud-header.png"
-            alt="Can I Graduate UD"
-            width={180}
-            height={44}
-            priority
-            className="h-8 sm:h-9 md:h-10 w-auto object-contain drop-shadow-sm transition-transform duration-200 hover:scale-[1.02]"
-          />
+      <header className="sticky top-0 z-40 h-16 border-b border-white/[0.08] bg-black/70 sm:bg-black/50 backdrop-blur-2xl px-4 sm:px-6 lg:px-8 flex items-center justify-between transition-all duration-300">
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <button
+            onClick={handleStartNewSession}
+            title="Volver al inicio - Can I Graduate UD"
+            className="flex items-center focus:outline-none transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+          >
+            <Image
+              src="/images/logo-canigraduateud-header.png"
+              alt="Can I Graduate UD"
+              width={220}
+              height={84}
+              priority
+              className="h-11 sm:h-12 md:h-[50px] w-auto object-contain drop-shadow-sm"
+            />
+          </button>
           <span className="hidden lg:inline-block text-[10px] font-medium text-neutral-400 border border-white/10 bg-white/[0.04] px-2 py-0.5 rounded-full">
             Sistemas UD
           </span>
@@ -556,16 +562,16 @@ export const ChatInterface: React.FC = () => {
             target="_blank"
             rel="noopener noreferrer"
             title="Universidad Distrital Francisco José de Caldas"
-            className="relative flex items-center justify-center shrink-0 p-1 hover:opacity-85 transition-opacity duration-200 cursor-pointer"
+            className="p-1 hover:opacity-85 transition-opacity duration-200 flex items-center justify-center shrink-0 cursor-pointer"
             aria-label="Portal Universidad Distrital"
           >
             <Image
               src="/images/logo-ud-header.png"
               alt="Logo Universidad Distrital"
-              width={40}
-              height={40}
+              width={36}
+              height={36}
               priority
-              className="w-8 h-8 sm:w-9 sm:h-9 object-contain drop-shadow-sm transition-transform duration-200 hover:scale-105"
+              className="w-7 h-7 sm:w-8 sm:h-8 object-contain drop-shadow-sm transition-transform duration-200 hover:scale-105"
             />
           </a>
         </div>
