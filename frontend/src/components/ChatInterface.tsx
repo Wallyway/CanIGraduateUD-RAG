@@ -776,9 +776,8 @@ export const ChatInterface: React.FC = () => {
                   <span className="select-none ml-0.5 sm:ml-1">?</span>
                 </span>
               </h1>
-              <p className="text-xs sm:text-base text-neutral-400 max-w-md mx-auto leading-relaxed font-normal">
-                Asistente RAG oficial para resolver tus requisitos, pasantías,
-                inglés B2 y modalidades de grado en Ingeniería de Sistemas.
+              <p className="text-xs sm:text-base text-neutral-400 max-w-md sm:max-w-lg mx-auto leading-relaxed font-normal">
+                Saber cómo graduarte debería ser fácil. Encontrar la respuesta, también.
               </p>
             </motion.div>
 
