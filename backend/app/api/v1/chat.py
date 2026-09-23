@@ -368,10 +368,27 @@ def stream_chat_response(
         if is_other_faculty:
             _log_other_faculty_interest(db, payload.query)
             return _scope_response(OTHER_FACULTY_GUARDRAIL_MESSAGE)
-        return _scope_response(
-            "Esta consulta está fuera del contexto de Ingeniería de Sistemas. "
-            "Puedes preguntar sobre grados, modalidades, requisitos o trámites académicos."
+        safety_check.is_safe = False
+        safety_check.violation_type = "QUERY_TRIAGE"
+        probability = jev_result.get("probability")
+        safety_check.violation_reason = (
+            "Consulta mixta: combina contexto académico válido con una intención adicional no relacionada "
+            f"(probabilidad de contexto válido: {probability:.2f}; umbral: {settings.JEV_THRESHOLD:.2f})."
+            if isinstance(probability, (int, float))
+            else "Consulta mixta con una intención adicional no relacionada."
         )
+        strike_result = strike_manager.record_strike(
+            ip=client_ip,
+            subnet=subnet,
+            device_id=device_id,
+            mac=client_mac,
+            user_agent=user_agent,
+            query=payload.query,
+            violation_type=safety_check.violation_type,
+            reason=safety_check.violation_reason,
+            db=db,
+        )
+        return _strike_response(safety_check, strike_result)
 
     # 6. Gate 5: Hybrid Cache Check (Exact O(1) & Semantic >= 0.95) (0 Tokens!)
     cached_entry = redis_cache.get(payload.query)

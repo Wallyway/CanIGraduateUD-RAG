@@ -526,8 +526,8 @@ class TestSecurityGuardrails(unittest.TestCase):
         # Cleanup
         chat.strike_manager.revoke_penalty(test_ip)
 
-    def test_jev_rejects_mixed_query_without_strike_or_rag(self):
-        """A benign Jev rejection stops downstream work without penalizing the user."""
+    def test_jev_rejects_mixed_query_with_strike_before_cache_and_rag(self):
+        """A mixed query is treated as an evasion attempt and stops downstream work."""
         from fastapi.testclient import TestClient
         from fastapi import FastAPI
         from app.api.v1 import chat
@@ -576,10 +576,10 @@ class TestSecurityGuardrails(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers.get("X-Security-Strike"), "0")
+        self.assertEqual(response.headers.get("X-Security-Strike"), "1")
         self.assertEqual(response.headers.get("X-Security-Banned"), "false")
-        self.assertIn('"content": "fuera "', response.text)
-        self.assertIn('"content": "Sistemas. "', response.text)
+        self.assertIn('"content": "(Strike "', response.text)
+        self.assertIn('"content": "mixta: "', response.text)
         cache_get.assert_not_called()
         answer_stream.assert_not_called()
         chat.strike_manager.revoke_penalty(test_ip)
