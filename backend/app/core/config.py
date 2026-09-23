@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     OPENROUTER_MAX_RETRIES: int = 3
     OPENROUTER_BACKOFF_FACTOR: float = 1.5
 
+    # Jev query triage settings
+    JEV_MODEL: str = "typesafe/jev-1.13"
+    JEV_DECISIONS_URL: str = "https://openrouter.ai/api/alpha/decisions"
+    JEV_THRESHOLD: float = 0.80
+    JEV_ENABLED: bool = True
+
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
 

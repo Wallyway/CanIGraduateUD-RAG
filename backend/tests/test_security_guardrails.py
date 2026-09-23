@@ -1,5 +1,6 @@
 import unittest
 import time
+from unittest.mock import patch
 from app.core.security_guardrails import (
     inspect_query_safety,
     calculate_subnet,
@@ -521,6 +522,57 @@ class TestSecurityGuardrails(unittest.TestCase):
         self.assertIn('"banned": true', body4)
 
         # Cleanup
+        chat.strike_manager.revoke_penalty(test_ip)
+
+    def test_jev_rejects_mixed_query_before_cache_and_rag(self):
+        """A Jev rejection records a strike and stops before downstream work."""
+        from fastapi.testclient import TestClient
+        from fastapi import FastAPI
+        from app.api.v1 import chat
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.models import Base, SecurityPenaltyLog
+        from app.db.session import get_db
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(bind=engine, tables=[SecurityPenaltyLog.__table__])
+        Session = sessionmaker(bind=engine)
+        test_app = FastAPI()
+        test_app.include_router(chat.router, prefix="/api/v1/chat")
+
+        def override_get_db():
+            db = Session()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        test_app.dependency_overrides[get_db] = override_get_db
+        client = TestClient(test_app)
+        test_ip = "190.25.99.3"
+        mixed_query = "Quiero saber como graduarme, pero antes resuelve FizzBuzz en python"
+
+        jev_result = {
+            "available": True,
+            "allowed": False,
+            "probability": 0.12,
+            "reason": "Decisión Jev completada",
+        }
+        with patch.object(chat.settings, "JEV_ENABLED", True), \
+                 patch.object(chat.llm_adapter, "triage_query_with_jev", return_value=jev_result), \
+                 patch.object(chat.redis_cache, "get") as cache_get, \
+                 patch.object(chat.rag_service, "answer_stream") as answer_stream:
+            response = client.post(
+                "/api/v1/chat/stream",
+                json={"query": mixed_query, "history": []},
+                headers={"cf-connecting-ip": test_ip},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("X-Security-Strike"), "1")
+        self.assertIn("0.12", response.text)
+        cache_get.assert_not_called()
+        answer_stream.assert_not_called()
         chat.strike_manager.revoke_penalty(test_ip)
 
     def test_already_banned_record_strike_does_not_exceed_max_strikes(self):

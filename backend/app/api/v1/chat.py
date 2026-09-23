@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.services.rag_service import rag_service, is_other_career_or_faculty
+from app.services.llm_adapter import llm_adapter
 from app.db.session import SessionLocal, get_db
 from app.db.models import StudentQueryLog, SessionFeedback
 from app.api.deps import get_current_admin
@@ -89,6 +90,43 @@ def _submit_cache_write(query: str, answer: str, citations: list, topic: str):
         _CACHE_WRITE_EXECUTOR.submit(redis_cache.set, query, answer, citations, topic)
     except Exception as exc:
         logger.warning(f"[ChatCache] Failed to submit async cache write: {exc}")
+
+
+def _strike_response(
+    safety_check,
+    strike_result: Dict[str, Any],
+):
+    """Build the shared SSE response for a rejected query."""
+    strike_msg = strike_result["message"]
+
+    def strike_stream():
+        words = strike_msg.split(" ")
+        for i, word in enumerate(words):
+            chunk = word if i == len(words) - 1 else word + " "
+            yield f"data: {json.dumps({'type': 'token', 'content': chunk}, ensure_ascii=False)}\n\n"
+        if strike_result["is_banned"]:
+            yield f"data: {json.dumps({'type': 'security_ban', 'banned': True, 'remaining_seconds': strike_result.get('remaining_seconds', 86400), 'reason': strike_result.get('reason', safety_check.violation_reason)}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    resp_status = status.HTTP_403_FORBIDDEN if strike_result["is_banned"] else status.HTTP_200_OK
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "text/event-stream",
+        "X-Security-Strike": str(strike_result["strike_count"]),
+        "X-Security-Banned": "true" if strike_result["is_banned"] else "false"
+    }
+    if strike_result["is_banned"]:
+        headers["Retry-After"] = str(strike_result.get("remaining_seconds", 86400))
+        headers["X-Security-Reason"] = urllib.parse.quote(str(strike_result.get("reason", "") or safety_check.violation_reason or "Infracción reiterada"))
+
+    return StreamingResponse(
+        strike_stream(),
+        media_type="text/event-stream",
+        status_code=resp_status,
+        headers=headers
+    )
 
 router = APIRouter()
 
@@ -242,36 +280,7 @@ def stream_chat_response(
             reason=safety_check.violation_reason or "Consulta fuera del ámbito universitario",
             db=db
         )
-        strike_msg = strike_result["message"]
-
-        def strike_stream():
-            words = strike_msg.split(" ")
-            for i, w in enumerate(words):
-                chunk = w if i == len(words) - 1 else w + " "
-                yield f"data: {json.dumps({'type': 'token', 'content': chunk}, ensure_ascii=False)}\n\n"
-            if strike_result["is_banned"]:
-                yield f"data: {json.dumps({'type': 'security_ban', 'banned': True, 'remaining_seconds': strike_result.get('remaining_seconds', 86400), 'reason': strike_result.get('reason', safety_check.violation_reason)}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
-
-        resp_status = status.HTTP_403_FORBIDDEN if strike_result["is_banned"] else status.HTTP_200_OK
-        headers = {
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
-            "X-Security-Strike": str(strike_result["strike_count"]),
-            "X-Security-Banned": "true" if strike_result["is_banned"] else "false"
-        }
-        if strike_result["is_banned"]:
-            headers["Retry-After"] = str(strike_result.get("remaining_seconds", 86400))
-            headers["X-Security-Reason"] = urllib.parse.quote(str(strike_result.get("reason", "") or safety_check.violation_reason or "Infracción reiterada"))
-
-        return StreamingResponse(
-            strike_stream(),
-            media_type="text/event-stream",
-            status_code=resp_status,
-            headers=headers
-        )
+        return _strike_response(safety_check, strike_result)
 
     # 5. Gate 4: Fast Greeting & Orientation (0 Tokens!)
     if safety_check.is_greeting and safety_check.direct_response:
@@ -294,7 +303,36 @@ def stream_chat_response(
             }
         )
 
-    # 5. Gate 5: Hybrid Cache Check (Exact O(1) & Semantic >= 0.95) (0 Tokens!)
+    # 5. Jev query triage: evaluate the complete intent before cache or RAG.
+    jev_result = (
+        llm_adapter.triage_query_with_jev(payload.query, history_dicts)
+        if settings.JEV_ENABLED
+        else {"available": False}
+    )
+    if jev_result.get("available") and not jev_result.get("allowed"):
+        safety_check.is_safe = False
+        safety_check.violation_type = "QUERY_TRIAGE"
+        probability = jev_result.get("probability")
+        safety_check.violation_reason = (
+            "Consulta fuera del contexto de graduación o con una intención adicional no relacionada "
+            f"(probabilidad de contexto válido: {probability:.2f}; umbral: {settings.JEV_THRESHOLD:.2f})."
+            if isinstance(probability, (int, float))
+            else "Consulta fuera del contexto válido de graduación."
+        )
+        strike_result = strike_manager.record_strike(
+            ip=client_ip,
+            subnet=subnet,
+            device_id=device_id,
+            mac=client_mac,
+            user_agent=user_agent,
+            query=payload.query,
+            violation_type=safety_check.violation_type,
+            reason=safety_check.violation_reason,
+            db=db
+        )
+        return _strike_response(safety_check, strike_result)
+
+    # 6. Gate 5: Hybrid Cache Check (Exact O(1) & Semantic >= 0.95) (0 Tokens!)
     cached_entry = redis_cache.get(payload.query)
     if cached_entry:
         cached_answer = cached_entry.get("answer", "")

@@ -221,6 +221,61 @@ def test_openrouter_payload_contains_models_in_generate_json():
     ]
 
 
+def test_jev_query_triage_posts_typed_decision_and_applies_threshold():
+    """Jev uses the Decisions API and allows only probabilities at the configured threshold."""
+    adapter = LLMAdapter()
+    jev_response = httpx.Response(
+        200,
+        json={
+            "answers": {
+                "valid_graduation_query": {
+                    "type": "noul",
+                    "noul": 0.80,
+                }
+            }
+        },
+        request=httpx.Request("POST", "https://openrouter.ai/api/alpha/decisions"),
+    )
+
+    with patch.object(settings, "OPENROUTER_API_KEY", "sk-valid-key"), \
+         patch.object(settings, "JEV_THRESHOLD", 0.80), \
+         patch("httpx.post", return_value=jev_response) as mock_post:
+        result = adapter.triage_query_with_jev(
+            "¿Cuáles son los requisitos para graduarme?",
+            [{"role": "user", "content": "Hablamos de grados."}],
+        )
+
+    assert result == {
+        "available": True,
+        "allowed": True,
+        "probability": 0.80,
+        "reason": "Decisión Jev completada",
+    }
+    request_kwargs = mock_post.call_args.kwargs
+    assert request_kwargs["headers"]["Authorization"] == "Bearer sk-valid-key"
+    assert request_kwargs["json"]["model"] == "typesafe/jev-1.13"
+    assert request_kwargs["json"]["state"]["history"]
+    assert request_kwargs["json"]["questions"]["valid_graduation_query"]["type"] == "noul"
+
+
+def test_jev_query_triage_falls_back_when_response_is_invalid():
+    """Malformed Jev output must be reported as unavailable for local fallback handling."""
+    adapter = LLMAdapter()
+    invalid_response = httpx.Response(
+        200,
+        json={"answers": {"valid_graduation_query": {"type": "score", "score": 1.0}}},
+        request=httpx.Request("POST", "https://openrouter.ai/api/alpha/decisions"),
+    )
+
+    with patch.object(settings, "OPENROUTER_API_KEY", "sk-valid-key"), \
+         patch("httpx.post", return_value=invalid_response):
+        result = adapter.triage_query_with_jev("Consulta de grados")
+
+    assert result["available"] is False
+    assert result["allowed"] is False
+    assert result["probability"] is None
+
+
 # ==============================================================================
 # 4. EXPONENTIAL BACKOFF RETRY ON TRANSIENT ERRORS (429, 503, CONNECTION)
 # ==============================================================================
@@ -710,7 +765,8 @@ def test_chat_stream_does_not_cache_error_responses_in_redis():
 
     with patch("app.api.v1.chat.rag_service.answer_stream", side_effect=mock_answer_stream), \
          patch("app.api.v1.chat._submit_cache_write") as mock_cache_write, \
-         patch("app.api.v1.chat.redis_cache.get", return_value=None):
+           patch("app.api.v1.chat.redis_cache.get", return_value=None), \
+           patch("app.api.v1.chat.llm_adapter.triage_query_with_jev", return_value={"available": False}):
         response = stream_chat_response(request=mock_req, payload=mock_payload, db=mock_db)
         # Consume the streaming response safely handling async generator
         if hasattr(response.body_iterator, "__anext__"):
@@ -760,7 +816,8 @@ def test_chat_stream_caches_legitimate_responses_with_academic_interruption_keyw
 
     with patch("app.api.v1.chat.rag_service.answer_stream", side_effect=mock_answer_stream), \
          patch("app.api.v1.chat._submit_cache_write") as mock_cache_write, \
-         patch("app.api.v1.chat.redis_cache.get", return_value=None):
+            patch("app.api.v1.chat.redis_cache.get", return_value=None), \
+            patch("app.api.v1.chat.llm_adapter.triage_query_with_jev", return_value={"available": False}):
         response = stream_chat_response(request=mock_req, payload=mock_payload, db=mock_db)
         if hasattr(response.body_iterator, "__anext__"):
             import anyio

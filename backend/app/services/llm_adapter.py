@@ -394,6 +394,113 @@ class LLMAdapter:
                         "recommended_action": "INDEX" if is_relevant else "IGNORE"
                     }
 
+    def triage_query_with_jev(
+        self,
+        query: str,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate a student query through Jev's typed Decisions API.
+
+        The caller owns the local fallback policy. This method reports
+        availability separately so an upstream outage cannot look like an
+        approved Jev decision.
+        """
+        api_key = settings.OPENROUTER_API_KEY
+        if not api_key or "your-" in api_key or "dummy" in api_key:
+            return {
+                "available": False,
+                "allowed": False,
+                "probability": None,
+                "reason": "Jev no está configurado",
+            }
+
+        payload = {
+            "model": settings.JEV_MODEL,
+            "state": {
+                "query": query,
+                "history": history or [],
+            },
+            "questions": {
+                "valid_graduation_query": {
+                    "type": "noul",
+                    "instructions": (
+                        "¿La consulta completa pertenece al contexto de graduación o vida académica "
+                        "de Ingeniería de Sistemas de la Universidad Distrital y no contiene una "
+                        "segunda tarea ajena que deba resolverse?"
+                    ),
+                    "criteria": {
+                        "true": (
+                            "Pregunta sobre requisitos, modalidades, fechas, docentes, créditos, "
+                            "trámites, documentos o normativa académica de graduación."
+                        ),
+                        "false": (
+                            "Incluye entretenimiento, programación no relacionada, tareas generales "
+                            "u otra intención ajena, aunque también mencione graduación."
+                        ),
+                    },
+                }
+            },
+        }
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/CanIGraduateUD",
+            "X-Title": "CanIGraduateUD-RAG",
+        }
+        max_retries = settings.OPENROUTER_MAX_RETRIES
+        backoff_factor = settings.OPENROUTER_BACKOFF_FACTOR
+
+        for attempt in range(1, max_retries + 2):
+            try:
+                response = httpx.post(
+                    settings.JEV_DECISIONS_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=settings.OPENROUTER_TIMEOUT,
+                )
+                response.raise_for_status()
+                result = response.json()
+                answer = result.get("answers", {}).get("valid_graduation_query", {})
+                probability = answer.get("noul")
+                if answer.get("type") != "noul" or not isinstance(probability, (int, float)):
+                    raise ValueError("Respuesta Jev sin una probabilidad Noul válida")
+                probability = float(probability)
+                if not 0.0 <= probability <= 1.0:
+                    raise ValueError("Probabilidad Noul fuera de rango")
+                return {
+                    "available": True,
+                    "allowed": probability >= settings.JEV_THRESHOLD,
+                    "probability": probability,
+                    "reason": "Decisión Jev completada",
+                }
+            except Exception as exc:
+                if is_transient_error(exc) and attempt <= max_retries:
+                    delay = backoff_factor ** attempt
+                    logger.warning(
+                        "[Jev] Transient error on attempt %s/%s: %s. Retrying in %.2fs...",
+                        attempt,
+                        max_retries + 1,
+                        exc,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning("[Jev] Query triage unavailable: %s", exc)
+                return {
+                    "available": False,
+                    "allowed": False,
+                    "probability": None,
+                    "reason": "Jev no pudo validar la consulta",
+                }
+
+        return {
+            "available": False,
+            "allowed": False,
+            "probability": None,
+            "reason": "Jev no pudo validar la consulta",
+        }
+
     def get_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Generates embeddings for vector store."""
         api_key = settings.OPENROUTER_API_KEY if self.provider == "openrouter" else settings.OPENAI_API_KEY
