@@ -21,14 +21,14 @@ Operating guide, architecture invariants, and coding standards for AI agents mod
 
 ## 2. Directory Layout & Layer Responsibilities
 
-| Directory       | Layer Responsibility                                       | Key Files                                                                      |
-| --------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `app/core/`     | Cross-cutting infrastructure, configuration & security     | `config.py`, `redis_cache.py`, `security_guardrails.py`, `virtual_queue.py`    |
-| `app/db/`       | Database persistence, schema models & connection factory   | `models.py` (7 tables), `session.py` (QueuePool & init_db)                     |
+| Directory       | Layer Responsibility                                       | Key Files                                                                                 |
+| --------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `app/core/`     | Cross-cutting infrastructure, configuration & security     | `config.py`, `redis_cache.py`, `security_guardrails.py`, `virtual_queue.py`               |
+| `app/db/`       | Database persistence, schema models & connection factory   | `models.py` (7 tables), `session.py` (QueuePool & init_db)                                |
 | `app/api/`      | HTTP & SSE presentation layer, authentication & routes     | `deps.py`, `v1/chat.py` (/ban-status), `v1/admin.py`, `v1/documents.py`, `v1/webhooks.py` |
-| `app/services/` | Business logic, RAG pipeline, LLM & vector operations      | `rag_service.py`, `llm_adapter.py`, `vector_store.py`, `document_processor.py` |
-| `scripts/`      | Database migration and maintenance utilities               | `migrate_sqlite_to_postgres.py`                                                |
-| `tests/`        | Automated test suite (unit, integration, concurrency, E2E) | 10 test files, 135 automated tests passing                                     |
+| `app/services/` | Business logic, RAG pipeline, LLM & vector operations      | `rag_service.py`, `llm_adapter.py`, `vector_store.py`, `document_processor.py`            |
+| `scripts/`      | Database migration and maintenance utilities               | `migrate_sqlite_to_postgres.py`                                                           |
+| `tests/`        | Automated test suite (unit, integration, concurrency, E2E) | 10 test files, 135 automated tests passing                                                |
 
 ---
 
@@ -76,15 +76,15 @@ docker compose up -d postgres backend
 
 ## 5. SSE Streaming Wire Protocol
 
-| Event Type    | Payload Format                                                       | Purpose                                   |
-| ------------- | -------------------------------------------------------------------- | ----------------------------------------- |
-| `queue`       | `data: {"type": "queue", "position": 1, "estimated_seconds": 2}\n\n` | Position in virtual queue when slots busy |
-| `queue_ready` | `data: {"type": "queue_ready"}\n\n`                                  | Signal that semaphore permit was claimed  |
-| `token`       | `data: {"type": "token", "content": "chunk"}\n\n`                    | Incremental answer tokens from LLM        |
-| `citations`   | `data: {"type": "citations", "citations": [...]}\n\n`                | Verified normative citations list         |
-| `security_ban`| `data: {"type": "security_ban", "remaining_seconds": 86400, "reason": "..."}\n\n` | 24h ban notification and remaining penalty |
-| `: ping`      | `: ping\n\n`                                                         | Keepalive comment (emitted every 15s)     |
-| `[DONE]`      | `data: [DONE]\n\n`                                                   | Stream terminal signal                    |
+| Event Type     | Payload Format                                                                    | Purpose                                    |
+| -------------- | --------------------------------------------------------------------------------- | ------------------------------------------ |
+| `queue`        | `data: {"type": "queue", "position": 1, "estimated_seconds": 2}\n\n`              | Position in virtual queue when slots busy  |
+| `queue_ready`  | `data: {"type": "queue_ready"}\n\n`                                               | Signal that semaphore permit was claimed   |
+| `token`        | `data: {"type": "token", "content": "chunk"}\n\n`                                 | Incremental answer tokens from LLM         |
+| `citations`    | `data: {"type": "citations", "citations": [...]}\n\n`                             | Verified normative citations list          |
+| `security_ban` | `data: {"type": "security_ban", "remaining_seconds": 86400, "reason": "..."}\n\n` | 24h ban notification and remaining penalty |
+| `: ping`       | `: ping\n\n`                                                                      | Keepalive comment (emitted every 15s)      |
+| `[DONE]`       | `data: [DONE]\n\n`                                                                | Stream terminal signal                     |
 
 ---
 
@@ -115,9 +115,10 @@ Before touching LLM tokens or vector embeddings, all incoming queries MUST trave
 
 1. **Gate 1 — 24h Ban Check**: Verify client IP, subnet (`/24` or `/64`), MAC address, and device ID against `strike_manager` and `SecurityPenaltyLog`. Frontend verifies state and remaining seconds via `GET /api/v1/chat/ban-status`.
 2. **Gate 2 — Rate Limiter**: Enforce sliding window (10 requests/min). Exceeding returns HTTP 429.
-3. **Gate 3 — Attack & Abuse Gate**: Scan regex patterns for prompt injection, system prompt extraction, jailbreaks, and non-academic queries. Log strikes (3 strikes = 24h ban).
+3. **Gate 3 — Attack & Abuse Gate**: Scan regex patterns for prompt injection, system prompt extraction, jailbreaks, malware/tool exploitation, and explicit abuse. Only malicious violations create strikes (3 strikes = 24h ban); benign scope and other-faculty queries are routed without penalty.
 4. **Gate 4 — Benign Greeting Gate**: Direct orientation for "hola" / "quién eres" without consuming LLM tokens.
-5. **Gate 5 — Hybrid Cache**: Check Layer 1 (exact normalized SHA-256) and Layer 2 (semantic cosine similarity >= 0.95).
+5. **Gate 5 — Jev Query Triage**: Evaluate complete intent with `typesafe/jev-1.13`; benign out-of-scope queries are routed without penalty, while malicious violations retain the strike path.
+6. **Gate 6 — Hybrid Cache**: Check Layer 1 (exact normalized SHA-256) and Layer 2 (semantic cosine similarity >= 0.95).
 
 ### D. Stateless Neon pgvector Store & ACID Cascades
 
@@ -143,7 +144,7 @@ Before touching LLM tokens or vector embeddings, all incoming queries MUST trave
 | `test_virtual_queue.py`             | 10    | FIFO queue order, capacity saturation (503), cascading ticket wake           |
 | `test_pdf_deduplication.py`         | 6     | Bold OCR deduplication, Spanish diacritics, citation deduplication           |
 | `test_pgvector_store.py`            | 5     | HNSW cosine similarity, VectorType, filtering, cascade delete                |
-| `test_agent_docs_integrity.py`      | 4     | Repository hygiene, AGENTS.md < 200 lines, modular docs, 0 orphan artifacts   |
+| `test_agent_docs_integrity.py`      | 4     | Repository hygiene, AGENTS.md < 200 lines, modular docs, 0 orphan artifacts  |
 | `e2e/test_derogation_e2e.py`        | 1     | Granular article and total document derogation lifecycle                     |
 
 All 135 tests MUST pass: `backend/.venv/bin/pytest backend/tests -q`.

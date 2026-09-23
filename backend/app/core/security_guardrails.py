@@ -288,6 +288,25 @@ class GuardrailCheckResult:
         self.direct_response = direct_response
 
 
+MALICIOUS_VIOLATION_MARKERS = (
+    "prompt injection",
+    "manipulacion de directrices",
+    "codigo malicioso",
+    "ciberataques",
+    "lenguaje soez",
+    "acoso",
+    "insultos",
+)
+
+
+def is_malicious_violation(check: GuardrailCheckResult) -> bool:
+    """Returns whether a rejected query represents abuse or exploitation."""
+    if check.violation_type == "PROMPT_INJECTION":
+        return True
+    reason = normalize_text(check.violation_reason or "")
+    return any(marker in reason for marker in MALICIOUS_VIOLATION_MARKERS)
+
+
 def has_academic_context(text: str) -> bool:
     """
     Checks whether the text contains academic or university keywords.

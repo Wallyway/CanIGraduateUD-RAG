@@ -8,7 +8,11 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from app.services.rag_service import rag_service, is_other_career_or_faculty
+from app.services.rag_service import (
+    rag_service,
+    is_other_career_or_faculty,
+    OTHER_FACULTY_GUARDRAIL_MESSAGE,
+)
 from app.services.llm_adapter import llm_adapter
 from app.db.session import SessionLocal, get_db
 from app.db.models import StudentQueryLog, SessionFeedback
@@ -20,7 +24,8 @@ from app.core.security_guardrails import (
     inspect_query_safety,
     strike_manager,
     rate_limiter,
-    STREAM_CONCURRENCY_SEMAPHORE
+    STREAM_CONCURRENCY_SEMAPHORE,
+    is_malicious_violation,
 )
 from app.core.redis_cache import redis_cache
 from concurrent.futures import ThreadPoolExecutor
@@ -127,6 +132,46 @@ def _strike_response(
         status_code=resp_status,
         headers=headers
     )
+
+
+def _scope_response(message: str):
+    """Build a non-penalizing SSE response for benign out-of-scope queries."""
+    def scope_stream():
+        words = message.split(" ")
+        for i, word in enumerate(words):
+            chunk = word if i == len(words) - 1 else word + " "
+            yield f"data: {json.dumps({'type': 'token', 'content': chunk}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'citations', 'citations': []}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        scope_stream(),
+        media_type="text/event-stream",
+        status_code=status.HTTP_200_OK,
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+            "X-Security-Strike": "0",
+            "X-Security-Banned": "false",
+        },
+    )
+
+
+def _log_other_faculty_interest(db: Session, query: str):
+    """Persist other-faculty demand for the admin interest analytics."""
+    try:
+        db.add(StudentQueryLog(
+            query_text=query,
+            topic_category="Otra Carrera / Facultad",
+            citations_count=0,
+            confidence_score=0.0,
+            has_knowledge_gap=False,
+            device_type="desktop",
+        ))
+        db.commit()
+    except Exception as exc:
+        logger.warning("[ChatInterest] Error logging other-faculty query: %s", exc)
 
 router = APIRouter()
 
@@ -268,7 +313,17 @@ def stream_chat_response(
     # 4. Gate 3: Anti-Prompting Attack & Abuse Gate (0 Tokens!)
     safety_check = inspect_query_safety(payload.query, history=history_dicts)
 
+    is_other_faculty = is_other_career_or_faculty(payload.query)
+    if is_other_faculty and not is_malicious_violation(safety_check):
+        _log_other_faculty_interest(db, payload.query)
+        return _scope_response(OTHER_FACULTY_GUARDRAIL_MESSAGE)
+
     if not safety_check.is_safe:
+        if not is_malicious_violation(safety_check):
+            return _scope_response(
+                "Esta herramienta está especializada en Ingeniería de Sistemas y no puede resolver esa consulta. "
+                "Puedes realizar una pregunta sobre grados, modalidades, requisitos o trámites de Ingeniería de Sistemas."
+            )
         strike_result = strike_manager.record_strike(
             ip=client_ip,
             subnet=subnet,
@@ -310,27 +365,13 @@ def stream_chat_response(
         else {"available": False}
     )
     if jev_result.get("available") and not jev_result.get("allowed"):
-        safety_check.is_safe = False
-        safety_check.violation_type = "QUERY_TRIAGE"
-        probability = jev_result.get("probability")
-        safety_check.violation_reason = (
-            "Consulta fuera del contexto de graduación o con una intención adicional no relacionada "
-            f"(probabilidad de contexto válido: {probability:.2f}; umbral: {settings.JEV_THRESHOLD:.2f})."
-            if isinstance(probability, (int, float))
-            else "Consulta fuera del contexto válido de graduación."
+        if is_other_faculty:
+            _log_other_faculty_interest(db, payload.query)
+            return _scope_response(OTHER_FACULTY_GUARDRAIL_MESSAGE)
+        return _scope_response(
+            "Esta consulta está fuera del contexto de Ingeniería de Sistemas. "
+            "Puedes preguntar sobre grados, modalidades, requisitos o trámites académicos."
         )
-        strike_result = strike_manager.record_strike(
-            ip=client_ip,
-            subnet=subnet,
-            device_id=device_id,
-            mac=client_mac,
-            user_agent=user_agent,
-            query=payload.query,
-            violation_type=safety_check.violation_type,
-            reason=safety_check.violation_reason,
-            db=db
-        )
-        return _strike_response(safety_check, strike_result)
 
     # 6. Gate 5: Hybrid Cache Check (Exact O(1) & Semantic >= 0.95) (0 Tokens!)
     cached_entry = redis_cache.get(payload.query)
